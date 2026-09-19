@@ -510,14 +510,62 @@ almost certainly the box's own finite stand-in for -inf. (A 0 dB entry
 reading back ~-0.1 dB is normal step-resolution quantisation and doesn't affect
 the curve.) See `gain_db_to_osc` / `osc_to_gain_db` in `array_math.py`.
 
-**This is not DirectOut's OSC namespace.** globcon's documented OSC
-support is for triggering snapshots/faders/mutes, not confirmed for deep
-per-channel delay/gain/polarity writes. Point this at an OSC monitor
-(e.g. Protokol) first to see the live stream, then remap the addresses
-here once you've confirmed the actual parameter paths Prodigy/ACE expect
-(via DirectOut's remote-protocol docs or the globcon OSC implementation
-chart) — or use this as the source feeding a lookup/translation layer in
-front of the box.
+**This is not DirectOut's OSC namespace.** These are generic stub
+addresses — remap them here to match the actual parameter paths your
+Prodigy/ACE setup expects, per DirectOut's own remote-protocol
+documentation, or use this as the source feeding a lookup/translation
+layer in front of the box.
+
+## Project (save / load)
+
+**New**, **Save**, **Save As...**, **Load...**, plus a free-text
+**Name / notes** field (e.g. venue + date), in the Project panel at the
+top of the left column.
+
+**New** resets every setting on screen to factory defaults — same
+confirmation-then-full-reset shape as Load, just with built-in defaults
+instead of a file (`project_io.default_project_dict()`, pushed through the
+same `apply_project_dict` used by Load, so there's one reset code path).
+Asks to confirm first, since anything unsaved is discarded. Turns off Live
+send and clears the current file path/name, same as opening a blank
+project would.
+
+**Save** / **Save As...** save every setting on screen — array/topology, level taper,
+units, DSP clock, environment, group (including pre-alignment tracking),
+sub box dimensions, venue, bandwidth, the sub → tops alignment wizard, OSC
+target, and per-sub Manual placement — to a **`.sadrt`** file (plain JSON,
+see `project_io.py`).
+
+Everything is stored in canonical SI units (m/ms/dB/Hz/°C) regardless of
+the currently displayed length unit — loading a file re-renders the
+display in whatever unit is currently selected, same as changing the Units
+dropdown does. Enum-like fields (topology, DSP clock, group polarity) are
+stored as stable internal keys rather than the combobox's display text, so
+relabeling a dropdown in a future version can't silently break older save
+files.
+
+**"Live send" is never restored from a loaded file**, even if it was
+checked when saved — it's always off after Load, and has to be re-enabled
+by hand. A saved project can come from a different venue/network than the
+one currently patched in, so auto-streaming OSC to a stale host the moment
+a file opens would be a real footgun mid-show; re-checking the box after
+verifying Host/Port in the OSC panel is the deliberate extra step.
+
+Loading is tolerant rather than strict: a field missing from an older save
+file just keeps today's default; an out-of-range number (e.g. a
+hand-edited file) is clamped to the nearest valid value; an unrecognized
+topology, taper window, unit, or DSP sample rate falls back to whatever is
+currently selected instead of crashing. Anything that needed fixing up
+this way is reported in a single warning dialog after the load completes
+— the file still loads, you just get told what didn't match cleanly. A
+file that can't be parsed as JSON at all, or a newer/corrupt file that
+fails while being applied, leaves the app's current on-screen state
+untouched rather than half-overwriting it.
+
+A `schema_version` field in the file lets a future format change apply
+migrations rather than break old saves; opening a file saved by a newer
+app version than the one running shows a warning that some settings may
+not have loaded.
 
 ## Files
 
@@ -529,3 +577,6 @@ front of the box.
 - `prealign_profiles.py` / `prealign_delays.csv` — L-Acoustics factory
   pre-alignment delay values for the Pre-alignment delay lookup panel,
   editable without touching code.
+- `project_io.py` — save/load `.sadrt` project files (see Project section
+  above). No UI dependency of its own beyond reading/writing the App's
+  Tkinter variables.

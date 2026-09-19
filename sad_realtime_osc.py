@@ -11,21 +11,22 @@ on what was verified against the original and how.
 Pick a topology, drag the sliders, watch the three values per sub update
 live, and stream them out over OSC as you go. The OSC address layout is a
 generic stub (/sad/sub/<n>/delay_ms|gain_db|polarity) -- point it at any
-OSC receiver to test. DirectOut globcon's own OSC namespace for deep
-per-channel parameters isn't publicly documented, so remap the addresses
-here once that's confirmed for your Prodigy/ACE setup.
+OSC receiver to test, and remap the addresses here to match your own
+device's documented OSC namespace.
 
 Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
+import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 
 from pythonosc.udp_client import SimpleUDPClient
 
+import project_io
 from array_math import (
     end_fire, gradient_cardioid, arc_steering, manual, forward_aspect_ratio,
     physical_horizontal_array, physical_arc_layout, physical_arc_chord_spacing, delays_from_depth,
@@ -127,6 +128,9 @@ class App(tk.Tk):
         self.prealign_contribution_ms = 0.0
         self.prealign_active = False
         self.prealign_note_var = tk.StringVar(value="")
+        self.project_name = tk.StringVar(value="")
+        self.project_path = None
+        self.project_status_var = tk.StringVar(value="unsaved project")
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -138,6 +142,7 @@ class App(tk.Tk):
         self.right_col.grid(row=0, column=1, sticky="new")
 
         # left column: primary/frequently-used controls + the per-sub table
+        self._build_project_panel()
         self._build_controls()
         self._build_taper_panel()
         self._build_bandwidth_panel()
@@ -169,6 +174,96 @@ class App(tk.Tk):
         height = max(self.winfo_reqheight(), 400)
         self.geometry(f"{width}x{height}")
         self.minsize(self.winfo_reqwidth(), 400)
+
+    # -------------------------------------------------------------- project --
+    def _build_project_panel(self):
+        frm = ttk.LabelFrame(self.left_col, text="Project")
+        frm.pack(fill="x", padx=10, pady=(10, 5))
+
+        ttk.Label(frm, text="Name / notes").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        name_entry = ttk.Entry(frm, textvariable=self.project_name, width=32)
+        name_entry.grid(row=0, column=1, columnspan=3, sticky="we", padx=5, pady=5)
+
+        ttk.Button(frm, text="New", command=self._new_project).grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Button(frm, text="Save", command=self._save_project).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(frm, text="Save As...", command=self._save_project_as).grid(
+            row=1, column=2, sticky="w", padx=5, pady=5)
+        ttk.Button(frm, text="Load...", command=self._load_project).grid(
+            row=1, column=3, sticky="w", padx=5, pady=5)
+
+        ttk.Label(frm, textvariable=self.project_status_var, foreground="#666").grid(
+            row=1, column=4, sticky="w", padx=5, pady=5)
+
+        self._help_icon(frm, row=0, col=4,
+                         text=f"Saves every setting on this screen -- topology, spacing, environment, group, "
+                              f"OSC target, etc. -- to a {project_io.FILE_EXTENSION} file (plain JSON) you can "
+                              f"reload later or hand to another engineer. \"New\" resets everything to factory "
+                              f"defaults (with a confirmation first) -- use it to clear out a loaded show before "
+                              f"starting a fresh one, without restarting the app. \"Live send\" is never restored "
+                              f"from a loaded file even if it was on when saved, and \"New\" always turns it off "
+                              f"too -- re-enable it by hand once you've checked the OSC host/port are correct "
+                              f"for this rig, since a stale saved target could otherwise start streaming to the "
+                              f"wrong place the moment a file opens.")
+
+        frm.grid_columnconfigure(5, weight=1)
+
+    def _new_project(self):
+        if not messagebox.askyesno(
+                "New project", "Reset every setting to defaults? Anything unsaved will be lost."):
+            return
+        project_io.apply_project_dict(self, project_io.default_project_dict())
+        self.project_path = None
+        self.project_status_var.set("unsaved project")
+
+    def _save_project(self):
+        if self.project_path is None:
+            self._save_project_as()
+            return
+        self._write_project(self.project_path)
+
+    def _save_project_as(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=project_io.FILE_EXTENSION,
+            filetypes=[("S.A.D. Realtime project", f"*{project_io.FILE_EXTENSION}"), ("All files", "*.*")],
+            initialfile=(self.project_name.get() or "show") + project_io.FILE_EXTENSION,
+        )
+        if not path:
+            return
+        self._write_project(path)
+
+    def _write_project(self, path):
+        try:
+            project_io.save_project(self, path)
+        except OSError as e:
+            messagebox.showerror("Save failed", f"Couldn't save project:\n{e}")
+            return
+        self.project_path = path
+        self.project_status_var.set(f"saved: {os.path.basename(path)}")
+
+    def _load_project(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("S.A.D. Realtime project", f"*{project_io.FILE_EXTENSION}"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            data = project_io.load_project(path)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("Load failed", f"Couldn't read project file:\n{e}")
+            return
+        try:
+            warnings = project_io.apply_project_dict(self, data)
+        except Exception as e:
+            messagebox.showerror(
+                "Load failed",
+                f"Project file was read but couldn't be applied:\n{e}\n\n"
+                "The app's current settings were left unchanged.")
+            return
+        self.project_path = path
+        self.project_status_var.set(f"loaded: {os.path.basename(path)}")
+        if warnings:
+            messagebox.showwarning(
+                "Loaded with warnings",
+                "Project loaded, but some values needed fixing up:\n\n" + "\n".join(f"- {w}" for w in warnings))
 
     # ---------------------------------------------------------- controls --
     def _build_controls(self):
