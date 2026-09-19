@@ -19,6 +19,8 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
+__version__ = "0.1.0"
+
 import tkinter as tk
 from tkinter import ttk
 
@@ -109,7 +111,7 @@ class Tooltip:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("S.A.D. Realtime")
+        self.title(f"S.A.D. Realtime v{__version__}")
         self.resizable(True, True)
 
         self.osc_client = None
