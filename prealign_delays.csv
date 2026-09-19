@@ -1,0 +1,10 @@
+main_system,sub_system,main_delay_ms,sub_delay_ms,main_polarity,sub_polarity,main_config,sub_config,notes
+K1,K1SB_X,0,0,normal,normal,standard,standard,
+K1,K1SB_60,6,0,normal,normal,standard,standard,
+K1,K1SB_100_NC,8.3,0,normal,negative,standard,noise_control_cardioid,K1-SB array deployed behind K1/K2; cardioid pattern via Noise Control preset -- sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,SB28_60,0.5,0,normal,negative,standard,standard,sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,SB28_60_C,6,0,normal,negative,standard,cardioid,One enclosure per group reversed internally by the preset -- sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,SB28_60_Cx,4,0,normal,negative,standard,extended_cardioid,One enclosure per group reversed internally by the preset; broadband rear cancellation -- sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,KS28_60,0.5,0,normal,negative,standard,standard,sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,KS28_60_C,6,0,normal,negative,standard,cardioid,One enclosure per group reversed internally by the preset -- sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
+K1,KS28_60_Cx,4,0,normal,negative,standard,extended_cardioid,One enclosure per group reversed internally by the preset; broadband rear cancellation -- sub_polarity=negative is a deliberate override of the guide's documented + (positive) factory default
