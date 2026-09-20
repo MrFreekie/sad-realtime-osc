@@ -24,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.6.0"
+__version__ = "0.8.0"
 
 import os
 import tkinter as tk
@@ -39,7 +39,8 @@ from array_math import (
     end_fire_arc_hybrid, gradient_arc_hybrid,
     sub_positions_arc_hybrid_lateral, sub_positions_arc_hybrid_depth,
     physical_ellipse_layout, progressive_arc_layout, min_adjacent_chord,
-    ellipse_ratio_from_far, angle_from_far_ellipse, focus_point,
+    ellipse_ratio_from_far, angle_from_far_ellipse, focus_point, avoid_point,
+    gradient_null_angle_deg, alpha_from_null_angle_deg,
     freq_at_wavelength_fraction, spacing_at_wavelength_fraction, grating_lobe_max_spacing_m,
     far_from_venue, arc_from_far, sub_positions, sub_positions_gradient, sub_positions_centered, array_length,
     gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db,
@@ -57,9 +58,10 @@ CUSTOM_PROFILE = "— custom —"
 
 TOPOLOGIES = ["End-Fire", "Gradient / Cardioid Pairs", "Physical Horizontal Array",
               "Arc / Broadside Steering", "End-Fire Arc Hybrid", "Gradient Arc Hybrid",
-              "Progressive Arc", "Focus Point", "Manual"]
+              "Progressive Arc", "Focus Point", "Avoid Point", "Manual"]
 (TOPO_END_FIRE, TOPO_GRADIENT, TOPO_PHYSICAL, TOPO_ARC,
- TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID, TOPO_PROGRESSIVE, TOPO_FOCUS, TOPO_MANUAL) = TOPOLOGIES
+ TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID, TOPO_PROGRESSIVE, TOPO_FOCUS, TOPO_AVOID,
+ TOPO_MANUAL) = TOPOLOGIES
 ARC_HYBRID_TOPOLOGIES = (TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID)
 # Every topology with an Angle control that means "coverage arc" -- used both
 # to show/hide Angle-related panels and to decide whether "Set arc" (Venue ->
@@ -122,6 +124,7 @@ WAVELENGTH_FRACTION = {
     TOPO_EF_ARC_HYBRID: 0.5,
     TOPO_GRAD_ARC_HYBRID: 0.5,
     TOPO_FOCUS: 0.5,
+    TOPO_AVOID: 0.5,
 }
 
 DSP_CLOCK_RATES = {
@@ -486,21 +489,47 @@ class App(tk.Tk):
                  "Near-field acoustic focusing, exact by construction (not an approximation) "
                  "-- this app's own extension, not a S.A.D. topology.")
 
+        self.avoid_x_label = ttk.Label(frm, text="Avoid X")
+        self.avoid_x_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+        self.avoid_x = tk.DoubleVar(value=10.0)
+        self.avoid_x_spin = self._make_length_field(frm, self.avoid_x, row=9, col=1)
+
+        self.avoid_y_label = ttk.Label(frm, text="Avoid Y")
+        self.avoid_y_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+        self.avoid_y = tk.DoubleVar(value=0.0)
+        self.avoid_y_spin = self._make_length_field(frm, self.avoid_y, row=10, col=1)
+        self.avoid_help = self._help_icon(
+            frm, row=10, col=3,
+            text="Avoid Point (\"Protection Mode\") -- the destructive twin of Focus Point: "
+                 "same time-alignment delay to the target (Avoid X out in front, Avoid Y "
+                 "lateral offset from centre), but alternating polarity (odd sub normal, even "
+                 "reversed) so the aligned arrivals cancel instead of add -- an exact, "
+                 "frequency-independent null, the same delay-align-then-invert trick that "
+                 "already makes Gradient/Cardioid's rear null exact, not a new mechanism. For "
+                 "an odd sub count the extra unpaired sub's polarity group is attenuated so "
+                 "both groups' total level still match exactly (visible as a small negative "
+                 "Gain Trim on that group). This is exact in arrival-time/phase terms only -- "
+                 "this app has no polar/SPL prediction, so real-world cancellation depth also "
+                 "depends on each element's actual level reaching the target (distance-spreading "
+                 "differences across the array aren't modelled). Treat the point as where the "
+                 "array's phase is exactly opposed, not a guaranteed real-world silent spot -- "
+                 "cross-check a noise-sensitive application against measurement.")
+
         self.pattern_label = ttk.Label(frm, text="Pattern")
-        self.pattern_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+        self.pattern_label.grid(row=11, column=0, sticky="w", padx=5, pady=5)
         self.gradient_pattern = tk.StringVar(value="Cardioid")
         self.pattern_cb = ttk.Combobox(frm, textvariable=self.gradient_pattern,
                                         values=GRADIENT_PATTERNS + [CUSTOM_PROFILE],
                                         state="readonly", width=13)
-        self.pattern_cb.grid(row=9, column=1, sticky="w", padx=5, pady=5)
+        self.pattern_cb.grid(row=11, column=1, sticky="w", padx=5, pady=5)
         self.pattern_cb.bind("<<ComboboxSelected>>", self._on_gradient_pattern_change)
 
         self.gradient_alpha = tk.DoubleVar(value=0.5)
         self.alpha_label, self.alpha_spin, self.alpha_slider = self._labeled_slider(
-            frm, "Pattern α", self.gradient_alpha, 0.0, 0.9, row=10, increment=0.01,
+            frm, "Pattern α", self.gradient_alpha, 0.0, 0.9, row=12, increment=0.01,
             decimals=3, on_commit=self._on_gradient_alpha_edited)
         self.pattern_help = self._help_icon(
-            frm, row=10, col=3,
+            frm, row=12, col=3,
             text="Front/rear delay ratio for the differential (Gradient) pair, generalizing "
                  "the fixed cardioid null (α = 0.5, straight behind the pair) to the standard "
                  "first-order pattern family E(θ) = α + (1-α)·cosθ: rear delay = transit time × "
@@ -509,6 +538,30 @@ class App(tk.Tk):
                  "0.75); editing α directly resets Pattern to \"— custom —\", same as Sub box "
                  "dimensions' Profile field. Capped below 1.0 -- that's the unreachable omni "
                  "limit, needing impractically large delay for a fixed small spacing.")
+
+        self.null_angle = tk.DoubleVar(value=180.0)
+        self.null_angle_label, self.null_angle_spin, self.null_angle_slider = self._labeled_slider(
+            frm, "Null angle (°)", self.null_angle, 90.0, 180.0, row=13, increment=0.5,
+            decimals=1, on_commit=self._on_null_angle_edited)
+        self.null_angle_help = self._help_icon(
+            frm, row=13, col=3,
+            text="The same broadband null Pattern/α already places, dialled directly by bearing "
+                 "instead: degrees off the pair's own front (on-axis) direction, 90° = Figure-8's "
+                 "side null through 180° = Cardioid's rear null. Exact by construction, the same "
+                 "delay-align-then-invert mechanism, not a different or weaker one -- verified by "
+                 "far-field superposition at every angle in range, not just the named presets "
+                 "(gradient_null_angle_deg / alpha_from_null_angle_deg in array_math.py). Sets α "
+                 "to match and resets Pattern to \"— custom —\", same convention as editing α "
+                 "directly. The null is a full cone around the array's own axis -- symmetric both "
+                 "sides, not one compass bearing -- so this dials how far round from the front the "
+                 "rejection sits, not left vs. right; for the two Arc Hybrids, combine this with "
+                 "Steer (which shifts the array's own aim asymmetrically) to bias a broad rejection "
+                 "zone toward one specific side of a noise-sensitive site, a far more robust tool "
+                 "for that than Avoid Point's single fragile point-null. No angle here below 90° "
+                 "or above a Subcardioid-and-wider α (> 0.5) -- both have no true null to dial; "
+                 "the field simply won't move past its own valid range, and picking Subcardioid "
+                 "from Pattern leaves this showing its last valid value rather than a meaningless "
+                 "one.")
 
         frm.grid_columnconfigure(2, weight=1)
 
@@ -572,11 +625,44 @@ class App(tk.Tk):
         if name == CUSTOM_PROFILE:
             return
         self.gradient_alpha.set(GRADIENT_PATTERN_ALPHA[name])
+        self._sync_null_angle_from_alpha()
         self._on_change()
 
     def _on_gradient_alpha_edited(self):
         """Hand-editing alpha (spin or slider) resets Pattern to custom,
         same convention as Sub box dimensions' _on_dimension_edited."""
+        self.gradient_pattern.set(CUSTOM_PROFILE)
+        self._sync_null_angle_from_alpha()
+        self._on_change()
+
+    def _sync_null_angle_from_alpha(self):
+        """Keeps Null angle showing the bearing the current alpha actually
+        places the null at, whenever alpha changes via Pattern or its own
+        slider -- one-way (alpha -> angle) here; the other direction is
+        _on_null_angle_edited. Left untouched (stale) when alpha has no
+        true null (Subcardioid and wider, alpha > 0.5) -- there's no
+        meaningful angle to show, and forcing one would misrepresent a
+        pattern that has no null at all."""
+        try:
+            angle = gradient_null_angle_deg(self.gradient_alpha.get())
+        except tk.TclError:
+            return
+        if angle is not None:
+            self.null_angle.set(round(angle, 1))
+
+    def _on_null_angle_edited(self):
+        """Hand-editing Null angle solves for the alpha that puts the
+        null there and applies it -- the inverse direction of
+        _sync_null_angle_from_alpha -- resetting Pattern to custom, same
+        convention as editing alpha directly."""
+        try:
+            angle = self.null_angle.get()
+        except tk.TclError:
+            return
+        alpha = alpha_from_null_angle_deg(angle)
+        if alpha is None:
+            return
+        self.gradient_alpha.set(round(alpha, 4))
         self.gradient_pattern.set(CUSTOM_PROFILE)
         self._on_change()
 
@@ -1277,7 +1363,7 @@ class App(tk.Tk):
         only -- see _update_collision_check for the row (depth) axis
         check, which those two also need and the other topologies don't."""
         topo = self.topology.get()
-        if topo in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE, TOPO_FOCUS) or topo in ARC_HYBRID_TOPOLOGIES:
+        if topo in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE, TOPO_FOCUS, TOPO_AVOID) or topo in ARC_HYBRID_TOPOLOGIES:
             return self.box_width.get(), "width"
         if topo in (TOPO_END_FIRE, TOPO_GRADIENT):
             return self.box_depth.get(), "depth"
@@ -1832,6 +1918,7 @@ class App(tk.Tk):
         is_hybrid = topo in ARC_HYBRID_TOPOLOGIES
         is_progressive = topo == TOPO_PROGRESSIVE
         is_focus = topo == TOPO_FOCUS
+        is_avoid = topo == TOPO_AVOID
         is_ellipse_capable = topo in ELLIPSE_TOPOLOGIES
         is_ellipse = is_ellipse_capable and self.shape.get() == SHAPE_ELLIPSE
         uses_angle = topo in ANGLE_TOPOLOGIES
@@ -1867,10 +1954,16 @@ class App(tk.Tk):
             (self.focus_x_label, self.focus_x_spin, self.focus_y_label, self.focus_y_spin,
              self.focus_help), is_focus)
         self._set_widgets_visible(
+            (self.avoid_x_label, self.avoid_x_spin, self.avoid_y_label, self.avoid_y_spin,
+             self.avoid_help), is_avoid)
+        self._set_widgets_visible(
             (self.pattern_label, self.pattern_cb, self.alpha_label, self.alpha_spin,
              self.alpha_slider, self.pattern_help), uses_gradient_pattern)
+        self._set_widgets_visible(
+            (self.null_angle_label, self.null_angle_spin, self.null_angle_slider,
+             self.null_angle_help), uses_gradient_pattern)
         has_topology_options = (uses_angle or uses_radius or uses_steer or is_hybrid
-                                 or is_ellipse_capable or is_progressive or is_focus
+                                 or is_ellipse_capable or is_progressive or is_focus or is_avoid
                                  or uses_gradient_pattern)
         if has_topology_options:
             self.topology_options_frame.pack(fill="x", padx=10, pady=5, after=self.spacing_label.master)
@@ -1887,7 +1980,7 @@ class App(tk.Tk):
             max_count = MAX_SUBS // 2
         elif is_hybrid:
             max_count = MAX_SUBS_SPATIAL // 2
-        elif is_physical or is_arc or is_manual or is_progressive or is_focus:
+        elif is_physical or is_arc or is_manual or is_progressive or is_focus or is_avoid:
             max_count = MAX_SUBS_SPATIAL
         else:
             max_count = MAX_SUBS
@@ -1944,6 +2037,15 @@ class App(tk.Tk):
                      "at the same instant, for maximum constructive buildup there. Near-field acoustic "
                      "focusing -- exact by construction from geometry alone, not an approximation. This app's "
                      "own extension, not a S.A.D. topology.",
+            TOPO_AVOID: "\"Protection Mode\": Focus Point's destructive twin -- same physical layout and "
+                     "same time-alignment delay to one target point (Avoid X/Y), but alternating polarity "
+                     "(odd sub normal, even reversed) so the aligned arrivals cancel instead of add. Exact, "
+                     "frequency-independent null at that point by construction -- the same delay-align-then-"
+                     "invert trick already behind Gradient/Cardioid's rear null, not a new mechanism. No "
+                     "polar/SPL prediction here either, so this is a phase-cancellation guarantee, not a "
+                     "measured-quiet guarantee -- for a genuinely noise-sensitive site, confirm with a "
+                     "prediction tool or measurement rather than trusting the geometry blind. This app's own "
+                     "extension, not a S.A.D. topology.",
             TOPO_MANUAL: self._manual_note_text(),
         }
         self.note.config(text=notes[topo])
@@ -2074,6 +2176,9 @@ class App(tk.Tk):
             if topo == TOPO_FOCUS:
                 return focus_point(self.count.get(), self.spacing.get(), self.focus_x.get(), self.focus_y.get(),
                                     self._speed_of_sound(), trims)
+            if topo == TOPO_AVOID:
+                return avoid_point(self.count.get(), self.spacing.get(), self.avoid_x.get(), self.avoid_y.get(),
+                                    self._speed_of_sound(), trims)
             if topo == TOPO_MANUAL:
                 n = self.count.get()
                 depths = [v.get() for v in self._manual_depth_vars()]
@@ -2100,7 +2205,7 @@ class App(tk.Tk):
             return []
         if topo == TOPO_GRADIENT:
             return sub_positions_gradient(self.count.get(), spacing)
-        if topo == TOPO_ARC or topo == TOPO_FOCUS:
+        if topo == TOPO_ARC or topo == TOPO_FOCUS or topo == TOPO_AVOID:
             return sub_positions_centered(self.count.get(), spacing)
         if topo in ARC_HYBRID_TOPOLOGIES:
             return sub_positions_arc_hybrid_lateral(self.count.get(), spacing)

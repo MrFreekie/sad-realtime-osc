@@ -4,10 +4,10 @@ By [freekieaudio.uk](https://freekieaudio.uk)
 
 A small desktop app that reimplements the delay/gain/polarity math behind
 Merlijn van Veen's Subwoofer Array Designer spreadsheet for four array
-topologies, plus five of this app's own extensions (two Arc Hybrids, an
-Ellipse shape, Progressive Arc, and Focus Point), without the polar/SPL
-prediction plots — just the three per-sub values, updated live and
-streamed out over OSC.
+topologies, plus six of this app's own extensions (two Arc Hybrids, an
+Ellipse shape, Progressive Arc, Focus Point, and Avoid Point), without the
+polar/SPL prediction plots — just the three per-sub values, updated live
+and streamed out over OSC.
 
 **100% vibe coded — use at your own risk, check all calculations before
 use.**
@@ -82,6 +82,28 @@ python sad_realtime_osc.py
   the α formula is usually derived from): the null angle
   `acos(α/(α−1))` this app's delay construction produces matches the
   literature's target-pattern null angle exactly, at every α tested.
+
+  A **Null angle (°)** control (90–180°) dials the same null directly by
+  bearing instead of via α — pick where the pair's rejection sits (90° =
+  Figure-8's side null, through 180° = Cardioid's rear null) and the app
+  solves the α that puts it there (`alpha_from_null_angle_deg` /
+  `gradient_null_angle_deg` in `array_math.py` — the exact same broadband
+  construction, just re-parameterized, not a different or weaker one;
+  verified by far-field superposition across the full range, not just
+  the four named presets). Fully in sync with Pattern/α: picking a
+  Pattern updates Null angle to match; editing Null angle solves for α
+  and resets Pattern to custom, same as editing α directly does. No
+  angle is reachable below 90° or above a Subcardioid-and-wider α — both
+  have no true null to dial, so past α = 0.5 the field simply stops
+  updating rather than showing a meaningless number. The null is a full
+  **cone around the pair's own front-back axis** — symmetric both sides,
+  not one compass bearing — so this dials how far round from the front
+  the rejection sits, not left vs. right on its own; see **Gradient Arc
+  Hybrid** below for combining it with Steer to bias a rejection zone
+  toward one side. A genuinely more robust way to protect a
+  noise-sensitive site than Avoid Point's single point-null: this holds
+  up across the whole sub passband (broadband, not one design frequency)
+  and isn't pinned to a wavelength-fragile exact XY coordinate.
 - **Physical Horizontal Array** — S.A.D.'s Setup 1: n elements physically
   placed *and rotated* on a real arc of a given **Radius**, spanning the
   Arc angle. Every element is already equidistant from the arc's centre
@@ -157,12 +179,21 @@ python sad_realtime_osc.py
   **column** along the array is a front/rear pair — End-Fire (both
   normal polarity, rear = 0 ms reference, front = + row delay) or
   Gradient (front = 0 ms/normal, rear = + row delay/reversed, same
-  **Pattern** / **α** control as Gradient / Cardioid Pairs, including its
-  own row transit time) — and the columns themselves are
-  arc-steered exactly like **Arc / Broadside Steering**: the same
-  symmetric, Steer-able delay pattern across columns, just applied
-  underneath each column's own front/rear offset instead of directly to
-  single elements. Kept strictly **1:1** front:back per column — no
+  **Pattern** / **α** / **Null angle** control as Gradient / Cardioid
+  Pairs, including its own row transit time) — and the columns
+  themselves are arc-steered exactly like **Arc / Broadside Steering**:
+  the same symmetric, Steer-able delay pattern across columns, just
+  applied underneath each column's own front/rear offset instead of
+  directly to single elements. Because every column shares one Null
+  angle *and* the whole array has its own independent **Steer**, the two
+  combine into a genuinely useful noise-mitigation tool: Null angle sets
+  how far round from the front each column's broadband rejection cone
+  sits, Steer biases the array's own aim asymmetrically toward one side
+  — together they can point a broad, whole-passband rejection zone
+  roughly at a specific site off to one side, far more robustly than
+  Avoid Point's single wavelength-fragile point-null (which only cancels
+  at one exact XY coordinate and one design frequency's worth of
+  precision in practice). Kept strictly **1:1** front:back per column — no
   independent front/back element-count ratio — since without a polar/SPL
   engine there's no way to verify one against, only textbook theory
   (`end_fire_arc_hybrid` / `gradient_arc_hybrid`, and the shared
@@ -218,6 +249,44 @@ python sad_realtime_osc.py
   point is precise phase alignment to the target, not amplitude
   shading — same as End-Fire/Gradient, Gain Trim is a flat manual value
   unless Group level is used).
+- **Avoid Point** ("Protection Mode") — Focus Point's destructive twin:
+  identical physical layout and the identical time-alignment delay law
+  to one target point (**Avoid X** / **Avoid Y**, same convention as
+  Focus X/Y), but **alternating polarity** (odd sub normal, even
+  reversed) instead of Focus Point's all-normal — since every element
+  now arrives at the target at the *same instant* but half are inverted,
+  they cancel instead of add, for an **exact, frequency-independent
+  null** at that point (`avoid_point` in `array_math.py`). This is the
+  same delay-align-then-invert mechanism that already makes
+  Gradient/Cardioid's rear null exact — not a new or different one, just
+  applied to a point instead of a direction. For an odd sub count the
+  extra unpaired sub's polarity group is automatically attenuated by
+  `20·log₁₀(n_reversed/n_normal)` dB (shown as a small negative Gain
+  Trim on that group only) so both groups' total level still balance
+  exactly regardless of parity. Verified by reconstructing the far-field
+  sum at several frequencies for both even and odd counts — every case
+  lands at floating-point zero (~1e-15), not merely small. Like Focus
+  Point: no Level taper (amplitude shading would unbalance the exact
+  cancellation), Gain Trim stays a flat computed value, same physical
+  layout/count rules. **Use case**: a specific noise-sensitive location
+  (a monitored dB(A) point, a neighbouring property) rather than a broad
+  rejection zone — for the latter, a steered cardioid/Arc topology aimed
+  with Steer is the more robust real-world tool, since its rejection
+  holds across the whole passband and isn't pinned to one exact
+  coordinate.
+
+  **Read this before trusting it on a real noise-sensitive show**: the
+  null is exact in *arrival-time/phase* terms only — this app has no
+  polar/SPL prediction at all, so real-world cancellation depth also
+  depends on each element's actual level reaching the target, and
+  near-field distance-spreading differences across a physically
+  spread-out array aren't modelled here. A wavelength at typical sub
+  frequencies is several metres, so the true null is roughly that
+  fragile in position too — a small shift in the array, the target, or
+  the speed of sound (temperature/humidity/wind) moves it. Treat Avoid X/Y
+  as where the array's phase is exactly opposed, not a guaranteed
+  real-world silent spot — confirm with measurement or a prediction tool
+  before relying on it for a genuinely noise-sensitive application.
 - **Manual** — place each sub freely by typing its own **X** (depth,
   front-to-back — larger/less-negative is closer to the audience, same
   sign convention as Physical Horizontal Array's X) and **Y** (lateral,
@@ -250,7 +319,7 @@ otherwise.
 Max sub count depends on topology: **End-Fire** up to 12, **Gradient /
 Cardioid Pairs** up to 6 pairs (12 subs), **Physical Horizontal Array**
 (either Shape), **Arc / Broadside Steering**, **Progressive Arc**,
-**Focus Point**, and **Manual** up to 48, **End-Fire Arc Hybrid** and
+**Focus Point**, **Avoid Point**, and **Manual** up to 48, **End-Fire Arc Hybrid** and
 **Gradient Arc Hybrid** up to 24 columns (48 subs) — those place
 elements freely (or, for the two hybrids, freely by column) rather than
 stacking them all front-to-back, so a much larger count is still a
@@ -347,8 +416,8 @@ together) or set **Width** / **Depth** directly with the up/down-arrow
 number boxes — editing either drops Profile back to "custom". Which
 dimension is checked depends on the active topology:
 
-- **Arc / Broadside Steering** / **Focus Point** — boxes sit side by
-  side, so **width** is checked against **Spacing** directly.
+- **Arc / Broadside Steering** / **Focus Point** / **Avoid Point** — boxes
+  sit side by side, so **width** is checked against **Spacing** directly.
 - **Physical Horizontal Array (Circle)** — **width**, checked against
   the derived constant chord distance between physically adjacent
   elements (`physical_arc_chord_spacing` in `array_math.py`), since
@@ -562,10 +631,12 @@ Only shown when **Arc / Broadside Steering**, **Physical Horizontal
 Array**, **Progressive Arc**, **End-Fire Arc Hybrid**, or **Gradient Arc
 Hybrid** is active —
 the topologies that are genuinely spatial line arrays, so the only
-places sidelobe-control windowing applies (**Focus Point** is also
-spatial, but its point is precise phase alignment to a target, not
-amplitude shading, so it's deliberately excluded — same as End-Fire/
-Gradient). Pick a **Window** — 9
+places sidelobe-control windowing applies (**Focus Point** and **Avoid
+Point** are also spatial, but their point is precise phase alignment to
+a target, not amplitude shading — Avoid Point's exact cancellation
+specifically *depends* on not being disturbed by an independent taper —
+so both are deliberately excluded, same as End-Fire/Gradient). Pick a
+**Window** — 9
 options: Uniform, Hann, Hamming, Blackman, Bartlett (triangular), Welch,
 Blackman-Harris, Nuttall, Flat Top, **Chebyshev**, **Taylor** — and,
 for the first 9, a **Max atten (dB)** (default 0 dB, i.e. no taper until
@@ -664,7 +735,7 @@ topology's Angle whenever it's already one of those five — it does
 Row spacing, Progression, etc. are all separate fields it leaves alone).
 It only switches topology (to Arc / Broadside Steering, same as before)
 when starting from something with no Angle at all: End-Fire, Gradient,
-Focus Point, or Manual.
+Focus Point, Avoid Point, or Manual.
 
 Enter venue length (throw/depth, front-to-back) and width (coverage,
 side-to-side); the panel computes `FAR = length / width` and the arc
@@ -696,8 +767,8 @@ venue shapes the circle can't, not just a cosmetic depth-scale slider.
 
 Default **60 Hz**. Enter the top of your sub's passband; the panel computes the spacing at
 which that frequency sits at ¼ wavelength (End-Fire/Gradient) or ½
-wavelength (Arc, the two Arc Hybrids' column Spacing, and Focus Point) —
-S.A.D.'s own spacing rule of thumb, based on the
+wavelength (Arc, the two Arc Hybrids' column Spacing, Focus Point, and
+Avoid Point) — S.A.D.'s own spacing rule of thumb, based on the
 highest frequency since that's where comb filtering from spacing bites
 first. "Use" applies it to the Spacing slider. Physical Horizontal Array
 and Progressive Arc have no Spacing field, so this shows "n/a" for both,

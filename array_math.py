@@ -143,6 +143,45 @@ def gradient_pair_delay_ms(transit_ms: float, alpha: float = 0.5) -> float:
     return transit_ms * alpha / (1.0 - alpha)
 
 
+def gradient_null_angle_deg(alpha: float):
+    """Null angle (degrees off the front/on-axis direction) of the
+    first-order pattern gradient_pair_delay_ms's alpha parameterizes --
+    theta_null = acos(alpha/(alpha-1)), the inverse of
+    alpha_from_null_angle_deg. Only defined for alpha in [0, 0.5]: above
+    0.5 the pattern is subcardioid-and-wider, with no true null anywhere
+    (see gradient_pair_delay_ms) -- returns None there. The null this
+    angle describes is a full cone around the pair's own front-back axis
+    (symmetric both sides, not one bearing) -- see README.md."""
+    if alpha is None or alpha < 0.0 or alpha > 0.5:
+        return None
+    cos_null = max(-1.0, min(1.0, alpha / (alpha - 1.0)))
+    return math.degrees(math.acos(cos_null))
+
+
+def alpha_from_null_angle_deg(angle_deg: float):
+    """Inverse of gradient_null_angle_deg: the alpha that places the
+    first-order pattern's null at angle_deg (degrees off the front/
+    on-axis direction), for angle_deg in [90, 180] -- the range
+    reachable at all (below 90 would need a negative alpha, not a
+    physically sensible differential-array weighting). Lets a broadband
+    rejection null be aimed directly by angle -- e.g. at a noise-
+    sensitive site's bearing off the array's own axis -- instead of via
+    the less physically intuitive alpha parameter alone; this is the
+    exact same broadband-exact construction as gradient_pair_delay_ms,
+    just re-parameterized, not a new or different mechanism. Returns
+    None outside [90, 180]."""
+    if angle_deg is None or angle_deg < 90.0 or angle_deg > 180.0:
+        return None
+    cos_theta = math.cos(math.radians(angle_deg))
+    denom = cos_theta - 1.0
+    if denom == 0.0:
+        return 0.0
+    # Mathematically always in [0, 0.5] for angle_deg in [90, 180] -- clamp
+    # away the floating-point noise that can otherwise push the 90 deg
+    # case a hair below 0 (cos(90 deg) isn't exactly 0 in binary float).
+    return max(0.0, min(0.5, cos_theta / denom))
+
+
 def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_db=None,
                        alpha: float = 0.5) -> list[SubOutput]:
     """Front/rear differential pairs. Front: 0 delay, normal polarity.
@@ -646,6 +685,66 @@ def focus_point(n: int, spacing_m: float, focus_x_m: float, focus_y_m: float,
     max_d = max(distances)
     return [SubOutput(i + 1, (max_d - distances[i]) / speed_mps * 1000.0, trims[i], False)
             for i in range(n)]
+
+
+def avoid_point(n: int, spacing_m: float, avoid_x_m: float, avoid_y_m: float,
+                 speed_mps: float, gain_trim_db=None) -> list[SubOutput]:
+    """The destructive twin of focus_point ("Protection Mode"): n elements
+    in the identical physical layout (straight line, evenly spaced,
+    centered, all at depth 0), delayed by focus_point's own exact
+    time-alignment law -- every element's contribution still arrives at
+    the target point at the same instant, frequency-independent, exact
+    by construction from geometry alone -- but with alternating polarity
+    (odd index normal, even index reversed, same convention as
+    gradient_cardioid's front/rear pairing) instead of focus_point's
+    all-normal polarity, so the aligned arrivals cancel instead of add.
+
+    This is the same "delay-align, then invert half" trick that already
+    makes gradient_cardioid's rear null exact at every frequency, not a
+    new or different mechanism -- see gradient_pair_delay_ms's docstring
+    for the underlying far-field superposition argument (the null
+    condition here is even simpler: equal-magnitude opposite-polarity
+    contributions arriving at the *same instant* cancel exactly,
+    regardless of frequency, with no delay term to solve for).
+
+    For even n this needs no gain correction: n/2 elements normal and
+    n/2 reversed, equal amplitude, sum to exactly zero at the target. For
+    odd n, the extra unpaired element goes to the normal (odd-index)
+    group, so that group is one element larger -- it gets attenuated by
+    20*log10(n_reversed/n_normal) dB so both groups' total linear
+    amplitude still match exactly. gain_trim_db, if given, is added on
+    top of (not instead of) this balancing correction.
+
+    Honesty note, same standard as focus_point's own "exact by
+    construction" claim: this is exact in arrival-time/phase terms, not
+    an SPL/amplitude-spreading model -- this app has no polar/SPL
+    prediction at all, so real cancellation depth at the target also
+    depends on each element's actual level actually arriving there
+    (near-field distance-spreading differences across a physically
+    spread-out array aren't modeled). Treat the target as where the
+    array's phase is exactly opposed, not as a guaranteed real-world SPL
+    floor -- cross-check a heavy reliance on this against measurement or
+    a prediction tool, same advice as the taper cost readout gives for
+    heavy tapers."""
+    trims = gain_trim_db or [0.0] * n
+    if n <= 0:
+        return []
+    lateral = sub_positions_centered(n, spacing_m)
+    distances = [math.hypot(avoid_x_m, avoid_y_m - y) for y in lateral]
+    max_d = max(distances)
+    delays_ms = [(max_d - d) / speed_mps * 1000.0 for d in distances]
+
+    n_normal = (n + 1) // 2
+    n_reversed = n // 2
+    balance_db = 20.0 * math.log10(n_reversed / n_normal) if n_reversed > 0 else 0.0
+
+    out = []
+    for i in range(n):
+        idx = i + 1
+        reversed_pol = (idx % 2 == 0)
+        correction = 0.0 if reversed_pol else balance_db
+        out.append(SubOutput(idx, delays_ms[i], trims[i] + correction, reversed_pol))
+    return out
 
 
 def delays_from_depth(x_values_m, speed_mps: float) -> list[float]:

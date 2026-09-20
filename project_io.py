@@ -35,6 +35,7 @@ _TOPOLOGY_KEYS = {
     "Gradient Arc Hybrid": "gradient_arc_hybrid",
     "Progressive Arc": "progressive_arc",
     "Focus Point": "focus_point",
+    "Avoid Point": "avoid_point",
     "Manual": "manual",
 }
 _TOPOLOGY_FROM_KEY = {v: k for k, v in _TOPOLOGY_KEYS.items()}
@@ -72,6 +73,8 @@ def build_project_dict(app) -> dict:
             "progression_ratio": app.progression_ratio.get(),
             "focus_x_m": app.focus_x.get(),
             "focus_y_m": app.focus_y.get(),
+            "avoid_x_m": app.avoid_x.get(),
+            "avoid_y_m": app.avoid_y.get(),
             "gradient_pattern": app.gradient_pattern.get(),
             "gradient_alpha": app.gradient_alpha.get(),
         },
@@ -163,6 +166,8 @@ def default_project_dict() -> dict:
             "progression_ratio": 1.0,
             "focus_x_m": 10.0,
             "focus_y_m": 0.0,
+            "avoid_x_m": 10.0,
+            "avoid_y_m": 0.0,
             "gradient_pattern": "Cardioid",
             "gradient_alpha": 0.5,
         },
@@ -249,6 +254,8 @@ def apply_project_dict(app, data: dict) -> list[str]:
         (app.progression_ratio, "progression_ratio", 1.0, 8.0),
         (app.focus_x, "focus_x_m", -100000.0, 100000.0),
         (app.focus_y, "focus_y_m", -100000.0, 100000.0),
+        (app.avoid_x, "avoid_x_m", -100000.0, 100000.0),
+        (app.avoid_y, "avoid_y_m", -100000.0, 100000.0),
         (app.gradient_alpha, "gradient_alpha", 0.0, 0.9),
     ):
         if key in array:
@@ -260,6 +267,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
     from sad_realtime_osc import GRADIENT_PATTERNS, CUSTOM_PROFILE
     pattern = array.get("gradient_pattern", app.gradient_pattern.get())
     app.gradient_pattern.set(pattern if pattern in GRADIENT_PATTERNS else CUSTOM_PROFILE)
+    # Null angle is derived from gradient_alpha (not its own .sadrt field) --
+    # keep it in sync with whatever alpha was just restored above, same as
+    # picking a Pattern or editing alpha directly would.
+    app._sync_null_angle_from_alpha()
 
     shape = array.get("shape", "circle")
     if shape not in ("circle", "ellipse"):

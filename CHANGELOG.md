@@ -3,6 +3,78 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.8.0] - 2026-09-20
+**Null angle (°)** control for Gradient / Cardioid Pairs and Gradient Arc
+Hybrid -- a robust, broadband alternative to Avoid Point for a
+noise-sensitive site: dials the pair's already-exact broadband null
+directly by bearing (90° through 180° off the pair's own front axis)
+instead of only via the less physically intuitive Pattern α. This is not
+a new mechanism -- `gradient_null_angle_deg` / `alpha_from_null_angle_deg`
+in `array_math.py` just re-parameterize `gradient_pair_delay_ms`'s
+existing exact construction (theta_null = acos(alpha/(alpha-1))), so the
+null stays exactly as broadband/frequency-independent as Pattern/alpha's
+always was. Verified by far-field superposition at every angle across the
+full 90-180° range, not just the four named presets -- every case lands
+at floating-point zero at every frequency tested, same standard as
+Avoid Point's own verification.
+
+Three-way live sync, following the same convention Pattern/alpha already
+established: picking a named Pattern sets both alpha and Null angle;
+editing Null angle solves for alpha and resets Pattern to custom; editing
+alpha directly updates Null angle to match and resets Pattern to custom
+(`_sync_null_angle_from_alpha` / `_on_null_angle_edited`). Alpha values
+above 0.5 (Subcardioid and wider) have no true null at all, so Null angle
+simply stops updating rather than showing a meaningless value -- the
+field's own 90-180° range also makes an out-of-range angle unreachable
+from that side. No new `.sadrt` field -- entirely derived from the
+existing `gradient_alpha`, restored on project load via the same sync
+function.
+
+For the two Arc Hybrids specifically, Null angle combines with the
+existing array-wide **Steer** control (which shifts the whole array's aim
+asymmetrically) to bias a broad rejection zone toward one specific side
+of a site, rather than being pinned to a symmetric cone around the
+array's own axis -- flagged in the UI help text as the more robust
+real-world tool for a genuinely noise-sensitive application than Avoid
+Point's single fragile point-null, since it holds up across the whole
+sub passband rather than one design frequency and isn't pinned to an
+exact, wavelength-fragile XY coordinate.
+
+Fixed in passing: the Pattern combobox itself was still gridded at row 9
+-- a leftover from 0.7.0, which moved its label to row 11 to make room
+for Avoid Point's own fields but missed updating the combobox's own grid
+call to match. Caught while adding Null angle to the same row block, not
+by symptom.
+
+## [0.7.0] - 2026-09-20
+New topology: **Avoid Point** ("Protection Mode") -- the destructive twin
+of Focus Point, for placing an exact broadband null at one XY point (e.g.
+a noise-sensitive site). Same physical layout and the same time-alignment
+delay law as Focus Point, but with alternating polarity (odd sub normal,
+even reversed, `avoid_point` in `array_math.py`) instead of Focus Point's
+all-normal polarity, so the aligned arrivals cancel instead of add --
+exact at every frequency by construction, the same delay-align-then-invert
+mechanism that already makes Gradient/Cardioid's rear null exact, not a
+new one. For an odd sub count the extra unpaired sub's polarity group
+gets an automatic `20*log10(n_reversed/n_normal)` dB correction so both
+groups' total level still balance exactly (visible as a small negative
+Gain Trim on that group only). Verified by reconstructing the far-field
+sum at several frequencies for both even and odd element counts -- every
+case lands at floating-point zero (~1e-15), not merely small. New **Avoid
+X** / **Avoid Y** fields (Topology options panel), same controls as Focus
+X/Y. Like Focus Point, no Level taper (amplitude shading would unbalance
+the exact-cancellation split) and Gain Trim stays a flat computed value.
+
+Honesty note carried into the UI help text and topology note: the null is
+exact in arrival-time/phase terms only -- this app has no polar/SPL
+prediction, so real-world cancellation depth also depends on each
+element's actual level reaching the target (near-field distance-spreading
+differences across the array aren't modelled). For a genuinely
+noise-sensitive application, cross-check against measurement or a
+prediction tool rather than trusting the geometry blind.
+
+New `.sadrt` fields: `array.avoid_x_m`, `array.avoid_y_m`.
+
 ## [0.6.0] - 2026-09-20
 GUI polish pass -- precision, clutter, and a coordinate convention, plus a
 British English pass and site credit:
