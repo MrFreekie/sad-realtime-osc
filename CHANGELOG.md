@@ -3,6 +3,52 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.6.0] - 2026-09-20
+GUI polish pass -- precision, clutter, and a coordinate convention, plus a
+British English pass and site credit:
+
+- **1 mm / 0.1° precision floors**: every length field (Spacing, Radius, box
+  dimensions, Group/alignment/venue distances) now quantizes to the nearest
+  millimetre on both typed entry and slider drag (`UNIT_DECIMALS`,
+  `_make_length_field`'s `commit`, `_on_spacing_slider`/
+  `_on_row_spacing_slider`), instead of showing 4 decimal places of whatever
+  unit happened to be active -- which meant the same value showed anywhere
+  from 0.1 mm to 1 micron of apparent precision depending purely on which
+  unit (m/cm/mm) was selected, with the underlying stored value never
+  actually rounded. Arc angle gets the same treatment at 0.1°
+  (`_labeled_slider`'s new opt-in `decimals` parameter, so Group delay/
+  level, Temperature, Humidity, and Altitude are unaffected).
+- **Per-sub table cleanup**: dropped the redundant **Gain (0-1 OSC)** column
+  (that value still goes out over OSC as `gain`, just no longer duplicated
+  in the table); merged **Delay (ms)/(smp)** and **Delay + Group (ms)/(smp)**
+  into one column pair with a new **Show delay as** ms/samples toggle in the
+  DSP clock panel (`_update_delay_headers`).
+- **Gain Trim is read-only** for the four computed topologies -- it was the
+  only directly-editable cell in an otherwise read-only row; set it via the
+  Level taper panel or Group level instead. Manual mode keeps its editable
+  Gain Trim entry, matching its X/Y/Polarity.
+- **Array panel split**: everything topology-specific (Arc, Radius, Steer,
+  Shape, Ellipse ratio, Row spacing, Progression, Focus X/Y, Pattern/α)
+  moved out of "Array" into a new **Topology options** panel that only
+  shows the handful of controls the current topology actually uses
+  (`_build_topology_options_panel`). Array itself is now a stable Topology/
+  Count/Spacing regardless of topology -- Gradient Arc Hybrid no longer
+  stacks nine unrelated rows into one box.
+- **X/Y convention**: a new selector in Units -- **d&b Mode** (X = depth,
+  Y = lateral) or **L-Acoustics Mode** (swapped, default) -- controlling
+  which per-sub table column is depth vs lateral, and which of Manual
+  mode's typed X/Y fields actually drives the delay calculation
+  (`_manual_depth_vars`/`_manual_lateral_vars`). Switching convention
+  mid-session re-labels in place without touching any typed Manual
+  positions.
+- British English spelling and formatting pass across the GUI and README
+  (centre, towards, dialled, generalised, metres, em dashes in place of
+  `--`).
+- Added a freekieaudio.uk credit line and a "100% vibe coded -- use at your
+  own risk" disclaimer to the GUI footer and README.
+
+New `.sadrt` field: `units.xy_convention`.
+
 ## [0.5.0] - 2026-09-20
 Three additions from a beamforming-technology survey against microphone
 arrays, steerable loudspeaker columns, and RF phased-array antennas — same
