@@ -31,6 +31,10 @@ _TOPOLOGY_KEYS = {
     "Gradient / Cardioid Pairs": "gradient_cardioid",
     "Physical Horizontal Array": "physical_horizontal",
     "Arc / Broadside Steering": "arc_steering",
+    "End-Fire Arc Hybrid": "end_fire_arc_hybrid",
+    "Gradient Arc Hybrid": "gradient_arc_hybrid",
+    "Progressive Arc": "progressive_arc",
+    "Focus Point": "focus_point",
     "Manual": "manual",
 }
 _TOPOLOGY_FROM_KEY = {v: k for k, v in _TOPOLOGY_KEYS.items()}
@@ -59,9 +63,15 @@ def build_project_dict(app) -> dict:
             "topology": _TOPOLOGY_KEYS.get(app.topology.get(), "arc_steering"),
             "count": app.count.get(),
             "spacing_m": app.spacing.get(),
+            "row_spacing_m": app.row_spacing.get(),
             "angle_deg": app.angle.get(),
             "radius_m": app.radius.get(),
             "steer_deg": app.steer.get(),
+            "shape": "ellipse" if app.shape.get() == "Ellipse" else "circle",
+            "ellipse_ratio": app.ellipse_ratio.get(),
+            "progression_ratio": app.progression_ratio.get(),
+            "focus_x_m": app.focus_x.get(),
+            "focus_y_m": app.focus_y.get(),
         },
         "level_taper": {
             "window": app.taper_window.get(),
@@ -140,9 +150,15 @@ def default_project_dict() -> dict:
             "topology": "arc_steering",
             "count": 6,
             "spacing_m": 1.4,
+            "row_spacing_m": 0.7,
             "angle_deg": 0.0,
             "radius_m": 2.0,
             "steer_deg": 0.0,
+            "shape": "circle",
+            "ellipse_ratio": 1.0,
+            "progression_ratio": 1.0,
+            "focus_x_m": 10.0,
+            "focus_y_m": 0.0,
         },
         "level_taper": {"window": "Uniform", "max_atten_db": 0.0},
         "units": {"length_unit": "m", "delay_display": "ms"},
@@ -219,15 +235,26 @@ def apply_project_dict(app, data: dict) -> list[str]:
 
     for var, key, lo, hi in (
         (app.spacing, "spacing_m", 0.001, 100000.0),
+        (app.row_spacing, "row_spacing_m", 0.001, 100000.0),
         (app.angle, "angle_deg", 0.0, 180.0),
         (app.radius, "radius_m", 0.001, 100000.0),
         (app.steer, "steer_deg", -90.0, 90.0),
+        (app.ellipse_ratio, "ellipse_ratio", 0.05, 2.0),
+        (app.progression_ratio, "progression_ratio", 1.0, 8.0),
+        (app.focus_x, "focus_x_m", -100000.0, 100000.0),
+        (app.focus_y, "focus_y_m", -100000.0, 100000.0),
     ):
         if key in array:
             value, clamped = _clamp(array[key], lo, hi, var.get())
             var.set(value)
             if clamped:
                 warnings.append(f"'{key}' out of range -- clamped to {value}.")
+
+    shape = array.get("shape", "circle")
+    if shape not in ("circle", "ellipse"):
+        warnings.append(f"Unknown Physical Horizontal Array shape '{shape}' -- kept current shape.")
+        shape = "circle" if app.shape.get() == "Circle" else "ellipse"
+    app.shape.set("Ellipse" if shape == "ellipse" else "Circle")
 
     # Rebuild the per-sub rows for the newly-set topology/count *before*
     # restoring manual per-sub data below, since _on_topology_change wipes

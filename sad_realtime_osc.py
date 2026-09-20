@@ -6,7 +6,13 @@ Arc, Forward Aspect Ratio) reimplements Merlijn van Veen's S.A.D.
 (Subwoofer Array Designer) calculator and manual -- credit to him, and
 to Mauricio "Magu" Ramirez and Bob "6o6" McCarthy, S.A.D.'s own credited
 inspiration. https://www.merlijnvanveen.nl/ -- see README.md for details
-on what was verified against the original and how.
+on what was verified against the original and how. End-Fire Arc Hybrid
+and Gradient Arc Hybrid are this app's own extension -- End-Fire/Gradient
+pairs arranged as arc-steered columns -- with no S.A.D. tutorial ground
+truth of their own; see README.md. The Ellipse shape was inspired by
+Rafael Gomes Pereira's SubArray Vizualizer (a separate third-party
+tool, public interface only -- see README.md's Credits section), with
+its actual math this app's own derivation.
 
 Pick a topology, drag the sliders, watch the three values per sub update
 live, and stream them out over OSC as you go. The OSC address layout is a
@@ -18,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.2.1"
+__version__ = "0.4.2"
 
 import os
 import tkinter as tk
@@ -30,6 +36,10 @@ import project_io
 from array_math import (
     end_fire, gradient_cardioid, arc_steering, manual, forward_aspect_ratio,
     physical_horizontal_array, physical_arc_layout, physical_arc_chord_spacing, delays_from_depth,
+    end_fire_arc_hybrid, gradient_arc_hybrid,
+    sub_positions_arc_hybrid_lateral, sub_positions_arc_hybrid_depth,
+    physical_ellipse_layout, progressive_arc_layout, min_adjacent_chord,
+    ellipse_ratio_from_far, angle_from_far_ellipse, focus_point,
     freq_at_wavelength_fraction, spacing_at_wavelength_fraction,
     far_from_venue, arc_from_far, sub_positions, sub_positions_gradient, sub_positions_centered, array_length,
     gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db,
@@ -45,13 +55,37 @@ from prealign_profiles import (
 CUSTOM_PROFILE = "— custom —"
 
 TOPOLOGIES = ["End-Fire", "Gradient / Cardioid Pairs", "Physical Horizontal Array",
-              "Arc / Broadside Steering", "Manual"]
-TOPO_END_FIRE, TOPO_GRADIENT, TOPO_PHYSICAL, TOPO_ARC, TOPO_MANUAL = TOPOLOGIES
+              "Arc / Broadside Steering", "End-Fire Arc Hybrid", "Gradient Arc Hybrid",
+              "Progressive Arc", "Focus Point", "Manual"]
+(TOPO_END_FIRE, TOPO_GRADIENT, TOPO_PHYSICAL, TOPO_ARC,
+ TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID, TOPO_PROGRESSIVE, TOPO_FOCUS, TOPO_MANUAL) = TOPOLOGIES
+ARC_HYBRID_TOPOLOGIES = (TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID)
+# Every topology with an Angle control that means "coverage arc" -- used both
+# to show/hide Angle-related panels and to decide whether "Set arc" (Venue ->
+# arc) can apply in place or has to switch topology first (see
+# _set_arc_from_venue). Kept as one shared set instead of re-deriving the
+# condition in both places, since letting them drift apart is exactly the bug
+# that made "Set arc" knock you out of an Arc Hybrid topology (fixed in 0.3.1).
+ANGLE_TOPOLOGIES = (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) + ARC_HYBRID_TOPOLOGIES
+# Topologies with a Shape (Circle/Ellipse) selector: Physical Horizontal Array
+# (real elliptical placement, physical_ellipse_layout) and Arc / Broadside
+# Steering plus both Arc Hybrids (electronic depth_scale on the same virtual
+# curvature, _arc_column_delays_s -- they're physically a straight line
+# either way, so there's no placement to bend, just the delay curve).
+# Progressive Arc is deliberately not included -- its own Progression ratio
+# is a different, not-yet-combined generalization of the same circle.
+ELLIPSE_TOPOLOGIES = (TOPO_PHYSICAL, TOPO_ARC) + ARC_HYBRID_TOPOLOGIES
+
+SHAPE_CIRCLE, SHAPE_ELLIPSE = "Circle", "Ellipse"
+PHYSICAL_SHAPES = [SHAPE_CIRCLE, SHAPE_ELLIPSE]
 
 WAVELENGTH_FRACTION = {
     TOPO_END_FIRE: 0.25,
     TOPO_GRADIENT: 0.25,
     TOPO_ARC: 0.5,
+    TOPO_EF_ARC_HYBRID: 0.5,
+    TOPO_GRAD_ARC_HYBRID: 0.5,
+    TOPO_FOCUS: 0.5,
 }
 
 DSP_CLOCK_RATES = {
@@ -295,27 +329,105 @@ class App(tk.Tk):
         self.wavelength_label = ttk.Label(frm, text="", width=16)
         self.wavelength_label.grid(row=2, column=3, sticky="w", padx=5, pady=5)
 
+        self.row_spacing_label = ttk.Label(frm, text="Row spacing")
+        self.row_spacing_label.grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        self.row_spacing = tk.DoubleVar(value=0.7)
+        self.row_spacing_spin = self._make_length_field(frm, self.row_spacing, row=3, col=1)
+        self.row_spacing_slider = ttk.Scale(frm, from_=0.1, to=5.0, orient="horizontal", variable=self.row_spacing,
+                                             command=self._on_row_spacing_slider)
+        self.row_spacing_slider.grid(row=3, column=2, sticky="ew", padx=5, pady=5)
+        self.row_wavelength_label = ttk.Label(frm, text="", width=16)
+        self.row_wavelength_label.grid(row=3, column=3, sticky="w", padx=5, pady=5)
+        self.row_spacing_help = self._help_icon(
+            frm, row=3, col=4,
+            text="Front-to-back spacing within each column, for the two Arc Hybrid "
+                 "topologies -- the internal End-Fire/Gradient pair depth, separate from "
+                 "Spacing above (which is the column-to-column lateral spacing along the "
+                 "arc). Always rated against 1/4 wavelength (like End-Fire/Gradient's own "
+                 "Spacing), regardless of the 1/2 wavelength rule used for the column "
+                 "Spacing above.")
+
         self.angle = tk.DoubleVar(value=0.0)
         self.angle_label, self.angle_spin, self.angle_slider = self._labeled_slider(
-            frm, "Arc (°)", self.angle, 0.0, 180.0, row=3, increment=1.0, decimals=1)
+            frm, "Arc (°)", self.angle, 0.0, 180.0, row=4, increment=1.0, decimals=1)
 
         self.far_label = ttk.Label(frm, text="FAR: -", width=12)
-        self.far_label.grid(row=3, column=3, sticky="w", padx=5, pady=5)
+        self.far_label.grid(row=4, column=3, sticky="w", padx=5, pady=5)
 
         self.radius_label = ttk.Label(frm, text="Radius")
-        self.radius_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
+        self.radius_label.grid(row=5, column=0, sticky="w", padx=5, pady=5)
         self.radius = tk.DoubleVar(value=2.0)
-        self.radius_spin = self._make_length_field(frm, self.radius, row=4, col=1)
+        self.radius_spin = self._make_length_field(frm, self.radius, row=5, col=1)
 
         self.steer = tk.DoubleVar(value=0.0)
         self.steer_label, self.steer_spin, self.steer_slider = self._labeled_slider(
-            frm, "Steer (°)", self.steer, -90.0, 90.0, row=5, increment=1.0, decimals=1)
+            frm, "Steer (°)", self.steer, -90.0, 90.0, row=6, increment=1.0, decimals=1)
         self.steer_help = self._help_icon(
-            frm, row=5, col=3,
+            frm, row=6, col=3,
             text="Redirects the whole arc's aim off-centre without changing its coverage "
                  "angle (FAR) -- for venues that aren't symmetrical about the array's own "
                  "centreline. Positive steers toward the highest-numbered sub. 0 = the "
                  "default symmetric aim, straight ahead.")
+
+        self.shape_label = ttk.Label(frm, text="Shape")
+        self.shape_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
+        self.shape = tk.StringVar(value=SHAPE_CIRCLE)
+        self.shape_cb = ttk.Combobox(frm, textvariable=self.shape, values=PHYSICAL_SHAPES,
+                                      state="readonly", width=10)
+        self.shape_cb.grid(row=7, column=1, sticky="w", padx=5, pady=5)
+        self.shape_cb.bind("<<ComboboxSelected>>", lambda e: self._on_shape_change())
+
+        self.ellipse_ratio = tk.DoubleVar(value=1.0)
+        self.ellipse_ratio_label, self.ellipse_ratio_spin, self.ellipse_ratio_slider = self._labeled_slider(
+            frm, "Ellipse ratio", self.ellipse_ratio, 0.05, 2.0, row=8, increment=0.05, decimals=2)
+        self.ellipse_ratio_help = self._help_icon(
+            frm, row=8, col=3,
+            text="Depth-scale ratio for Shape = Ellipse: 1.0 is a true circle (identical to "
+                 "Shape = Circle); below 1 flattens the bow, above 1 exaggerates it. For "
+                 "Physical Horizontal Array this scales the real physical placement (Radius "
+                 "stays what it is); for Arc / Broadside Steering and the two Arc Hybrids, "
+                 "which are physically a straight line either way, it scales the virtual "
+                 "curvature used for delay instead -- same ratio, same effect on the pattern, "
+                 "just electronic rather than physical. Rotation is not computed for Ellipse "
+                 "(always 0°, Physical Horizontal Array only -- the other three never had "
+                 "rotation to begin with) -- a true ellipse's aim direction is the local "
+                 "tangent, not the parametric angle, and this app treats subs as "
+                 "omnidirectional enough at these frequencies that it isn't worth tracking "
+                 "for this shape. This app's own extension, not part of S.A.D. -- no "
+                 "tutorial ground truth to verify it against.")
+
+        self.progression_ratio = tk.DoubleVar(value=1.0)
+        self.progression_label, self.progression_spin, self.progression_slider = self._labeled_slider(
+            frm, "Progression", self.progression_ratio, 1.0, 8.0, row=9, increment=0.1, decimals=2)
+        self.progression_help = self._help_icon(
+            frm, row=9, col=3,
+            text="Center:edge angular-step ratio for Progressive Arc -- 1.0 is a uniform "
+                 "circular arc (identical to Physical Horizontal Array); above 1 makes the "
+                 "center gap(s) progressively wider (tighter curvature there) and the edge "
+                 "gaps progressively narrower (flatter, longer throw down the flanks), while "
+                 "total coverage angle (and FAR) stays exactly what Arc (°) says. Rotation is "
+                 "still the true local aim angle here, unlike Ellipse -- every element still "
+                 "sits on one real circle of the given Radius, just unevenly spaced along it. "
+                 "This app's own extension, not part of S.A.D. -- no tutorial ground truth to "
+                 "verify it against.")
+
+        self.focus_x_label = ttk.Label(frm, text="Focus X")
+        self.focus_x_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+        self.focus_x = tk.DoubleVar(value=10.0)
+        self.focus_x_spin = self._make_length_field(frm, self.focus_x, row=10, col=1)
+
+        self.focus_y_label = ttk.Label(frm, text="Focus Y")
+        self.focus_y_label.grid(row=11, column=0, sticky="w", padx=5, pady=5)
+        self.focus_y = tk.DoubleVar(value=0.0)
+        self.focus_y_spin = self._make_length_field(frm, self.focus_y, row=11, col=1)
+        self.focus_help = self._help_icon(
+            frm, row=11, col=3,
+            text="Focus Point (\"Destruction Mode\") delays every sub so its output arrives "
+                 "at one target point at the same instant, for maximum constructive buildup "
+                 "there -- Focus X is how far out in front of the line the target sits, "
+                 "Focus Y is its lateral offset from the line's own center (0 = dead ahead). "
+                 "Near-field acoustic focusing, exact by construction (not an approximation) "
+                 "-- this app's own extension, not a S.A.D. topology.")
 
         frm.grid_columnconfigure(2, weight=1)
 
@@ -325,6 +437,15 @@ class App(tk.Tk):
         same 1 mm floor the typed field enforces."""
         try:
             self.spacing.set(round(float(value), 3))
+        except (tk.TclError, ValueError):
+            pass
+        self._on_change()
+
+    def _on_row_spacing_slider(self, value):
+        """Same quantize-on-drag reasoning as _on_spacing_slider, for Row
+        spacing's slider."""
+        try:
+            self.row_spacing.set(round(float(value), 3))
         except (tk.TclError, ValueError):
             pass
         self._on_change()
@@ -386,7 +507,7 @@ class App(tk.Tk):
 
     # --------------------------------------------------------------- taper --
     def _build_taper_panel(self):
-        frm = ttk.LabelFrame(self.left_col, text="Level taper (Arc / Physical Array only)")
+        frm = ttk.LabelFrame(self.left_col, text="Level taper (Arc / Physical / Progressive / Hybrids only)")
         frm.pack(fill="x", padx=10, pady=5)
         self.taper_frame = frm
 
@@ -409,9 +530,12 @@ class App(tk.Tk):
                          text="Live gain taper, always following each sub's Gain trim -- 0 dB at the "
                               "window's peak, fading to -max atten at its minimum, shaped by the chosen "
                               "window (9 classic sidelobe-control windows; Uniform or 0 dB = flat, no "
-                              "taper). For Arc / Broadside Steering, the peak follows the Steer angle "
-                              "(arc_steered_aim_index) instead of always sitting at the array's physical "
-                              "centre -- 0° Steer keeps it centred as before. Flat Top is a known exception "
+                              "taper). For the two Arc Hybrid topologies, the taper is computed across "
+                              "columns, not individual subs -- both the front and rear sub in a column get "
+                              "that column's trim. For Arc / Broadside Steering and the Arc Hybrids, the peak "
+                              "follows the Steer angle (arc_steered_aim_index) instead of always sitting at "
+                              "the array's physical centre -- 0° Steer keeps it centred as before. Flat Top "
+                              "is a known exception "
                               "to \"monotonic taper\" — it's an amplitude-accuracy window with a small "
                               "ripple near the edges by design, so it can dip slightly past -max atten "
                               "there; that's correct for Flat Top, not a bug. This app has no polar/SPL "
@@ -420,12 +544,18 @@ class App(tk.Tk):
 
     def _sync_level_taper(self):
         """Keeps Gain trim live-following the Level taper window for Arc /
-        Physical Horizontal Array, the same way Delay is always live for
-        those topologies -- no separate "Apply" step. For Arc, the taper's
-        peak follows Steer's shifted aim point instead of staying pinned
-        to the array's physical centre."""
+        Physical Horizontal Array / Progressive Arc / the two Arc
+        Hybrids, the same way Delay is always live for those topologies
+        -- no separate "Apply" step. For Arc and the Arc Hybrids, the
+        taper's peak follows Steer's shifted aim point instead of
+        staying pinned to the array's physical centre (Physical and
+        Progressive have no Steer, so they always stay centred). For the
+        Arc Hybrids, the window is computed across columns (n = Columns,
+        not total subs) and both the front and rear sub in a column get
+        that column's trim."""
         topo = self.topology.get()
-        if topo not in (TOPO_ARC, TOPO_PHYSICAL):
+        is_hybrid = topo in ARC_HYBRID_TOPOLOGIES
+        if topo not in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) and not is_hybrid:
             return
         try:
             n = self.count.get()
@@ -434,7 +564,7 @@ class App(tk.Tk):
         except tk.TclError:
             return
         center_index = None
-        if topo == TOPO_ARC:
+        if topo == TOPO_ARC or is_hybrid:
             try:
                 center_index = arc_steered_aim_index(n, self.angle.get(), self.steer.get())
             except tk.TclError:
@@ -444,8 +574,10 @@ class App(tk.Tk):
         except ValueError:
             return
         for i, db in enumerate(taper):
-            if i < len(self.trim_vars):
-                self.trim_vars[i].set(round(db, 2))
+            targets = (i * 2, i * 2 + 1) if is_hybrid else (i,)
+            for j in targets:
+                if j < len(self.trim_vars):
+                    self.trim_vars[j].set(round(db, 2))
 
     # --------------------------------------------------------------- units --
     def _build_units_panel(self):
@@ -875,11 +1007,15 @@ class App(tk.Tk):
 
         self._help_icon(frm, row=0, col=3,
                          text="Pick a profile to fill Width/Depth from a known box, or edit either directly "
-                              "(resets Profile to \"custom\"). Width applies to Arc / Broadside Steering "
-                              "(boxes side by side); depth applies to End-Fire and Gradient (boxes front to "
-                              "back). \"Set min spacing\" sets Spacing to that dimension exactly (boxes "
-                              "touching); \"Set spacing (+ gap)\" adds the gap value on top, for "
-                              "cable/rigging clearance. Profiles load from sub_profiles.csv.")
+                              "(resets Profile to \"custom\"). Width applies to Arc / Broadside Steering, "
+                              "Physical Horizontal Array, Progressive Arc, and Focus Point (boxes side by "
+                              "side); depth applies to End-Fire and Gradient (boxes front to back). The two "
+                              "Arc Hybrids check both: width against Spacing (column-to-column) and depth "
+                              "against Row spacing (front/rear pair). \"Set min spacing\" sets Spacing to that "
+                              "dimension exactly (boxes touching); \"Set spacing (+ gap)\" adds the gap value "
+                              "on top, for cable/rigging clearance -- both only ever touch Spacing, not Row "
+                              "spacing, and are no-ops for Physical Horizontal Array/Progressive Arc, which "
+                              "have no Spacing field. Profiles load from sub_profiles.csv.")
 
         ttk.Label(frm, text="Width").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.box_width = tk.DoubleVar(value=1.340)
@@ -943,9 +1079,12 @@ class App(tk.Tk):
 
     def _relevant_box_dimension(self):
         """(dimension_m, name) for whichever box dimension the active
-        topology's spacing axis uses, or (None, None) in Manual mode."""
+        topology's spacing axis uses, or (None, None) in Manual mode. For
+        the two Arc Hybrid topologies this is the column (width) axis
+        only -- see _update_collision_check for the row (depth) axis
+        check, which those two also need and the other topologies don't."""
         topo = self.topology.get()
-        if topo in (TOPO_ARC, TOPO_PHYSICAL):
+        if topo in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE, TOPO_FOCUS) or topo in ARC_HYBRID_TOPOLOGIES:
             return self.box_width.get(), "width"
         if topo in (TOPO_END_FIRE, TOPO_GRADIENT):
             return self.box_depth.get(), "depth"
@@ -953,14 +1092,42 @@ class App(tk.Tk):
 
     def _effective_spacing_m(self):
         """Spacing the collision check compares against: the Spacing
-        field for topologies that use it, or the derived chord spacing
-        between adjacent elements for Physical Horizontal Array (which
-        has no Spacing input of its own)."""
-        if self.topology.get() == TOPO_PHYSICAL:
+        field for topologies that use it, or the smallest adjacent-element
+        gap for the topologies that place elements on a curve instead
+        (Physical Horizontal Array, Progressive Arc), which have no
+        Spacing input of their own. Physical Horizontal Array's plain
+        Circle shape uses the exact constant-chord formula (verified
+        against S.A.D.'s tutorial); Ellipse and Progressive Arc don't have
+        a constant chord (the gap varies along the array), so they measure
+        the actual placed layout directly and take its minimum -- the
+        worst-case gap is what a collision check needs."""
+        topo = self.topology.get()
+        if topo == TOPO_PHYSICAL and self.shape.get() == SHAPE_CIRCLE:
             return physical_arc_chord_spacing(self.count.get(), self.radius.get(), self.angle.get())
+        if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+            return min_adjacent_chord(self._compute_physical_layout())
         return self.spacing.get()
 
+    @staticmethod
+    def _clearance_text(spacing, box_dim, dim_name):
+        clearance = spacing_clearance_m(spacing, box_dim)
+        if clearance < 0:
+            return f"⚠ {box_dim:.2f} m {dim_name} > {spacing:.2f} m spacing (by {-clearance:.2f} m)"
+        return f"OK — {clearance:.2f} m clearance ({dim_name})"
+
     def _update_collision_check(self):
+        if self.topology.get() in ARC_HYBRID_TOPOLOGIES:
+            # Two independent physical checks here, not one: column spacing
+            # (boxes side by side, like Arc) and row spacing (front/rear
+            # pair depth, like End-Fire/Gradient) both need clearance.
+            try:
+                col_text = self._clearance_text(self.spacing.get(), self.box_width.get(), "width")
+                row_text = self._clearance_text(self.row_spacing.get(), self.box_depth.get(), "depth")
+            except tk.TclError:
+                self.collision_label.config(text="-")
+                return
+            self.collision_label.config(text=f"col: {col_text}  |  row: {row_text}")
+            return
         try:
             box_dim, dim_name = self._relevant_box_dimension()
         except tk.TclError:
@@ -977,16 +1144,10 @@ class App(tk.Tk):
         if spacing is None:
             self.collision_label.config(text="-")
             return
-        clearance = spacing_clearance_m(spacing, box_dim)
-        if clearance < 0:
-            self.collision_label.config(
-                text=f"⚠ collision: {box_dim:.2f} m {dim_name} > {spacing:.2f} m spacing "
-                     f"(by {-clearance:.2f} m)")
-        else:
-            self.collision_label.config(text=f"OK — {clearance:.2f} m clearance ({dim_name})")
+        self.collision_label.config(text=self._clearance_text(spacing, box_dim, dim_name))
 
     def _set_min_spacing(self):
-        if self.topology.get() == TOPO_PHYSICAL:
+        if self.topology.get() in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
             return  # no Spacing field to set -- spacing is a consequence of Radius/Arc/count here
         try:
             box_dim, _ = self._relevant_box_dimension()
@@ -999,7 +1160,7 @@ class App(tk.Tk):
         self._on_change()
 
     def _set_spacing_with_gap(self):
-        if self.topology.get() == TOPO_PHYSICAL:
+        if self.topology.get() in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
             return
         try:
             box_dim, _ = self._relevant_box_dimension()
@@ -1034,8 +1195,31 @@ class App(tk.Tk):
 
         self._help_icon(frm, row=0, col=6,
                          text="Length = throw/depth (front-to-back), width = coverage (side-to-side). "
-                              "FAR = length / width; \"Set arc\" solves arc = 2·asin(1/FAR) and switches "
-                              "to Arc / Broadside Steering.")
+                              "FAR = length / width; \"Set arc\" applies the solved Angle to whichever "
+                              "angle-based topology is already active (Arc / Broadside Steering, either Arc "
+                              "Hybrid, Physical Horizontal Array, Progressive Arc), or switches to Arc / "
+                              "Broadside Steering first if not (End-Fire, Gradient, Focus Point, or Manual, "
+                              "none of which have an Angle that means the same thing). For a Shape = Ellipse "
+                              "topology, it solves venues wider than they are deep (FAR < 1) too -- Angle "
+                              "pins at 180° instead of the usual arc = 2·asin(1/FAR), which has no solution "
+                              "there (see the Ellipse ratio row below for that case's other half).")
+
+        self.venue_ellipse_label = ttk.Label(frm, text="ellipse ratio: -", width=22)
+        self.venue_ellipse_label.grid(row=1, column=4, sticky="w", padx=5, pady=5)
+
+        self.use_venue_ellipse_btn = ttk.Button(frm, text="Use", command=self._use_venue_ellipse_ratio)
+        self.use_venue_ellipse_btn.grid(row=1, column=5, sticky="w", padx=5, pady=5)
+
+        self.venue_ellipse_help = self._help_icon(
+            frm, row=1, col=6,
+            text="Ellipse ratio implied by this venue's proportions (ellipse_ratio_from_far in "
+                 "array_math.py) -- 1.0 at FAR >= 1 (the plain circle already covers those "
+                 "venues fine) shrinking below 1 as the room gets wider than it is deep, "
+                 "continuous with \"Set arc\"'s own Angle = 180° pin at FAR < 1. Independent "
+                 "of \"Set arc\" -- \"Use\" only ever touches Ellipse ratio, never Angle, so "
+                 "you can apply one without the other. Only shown for a Shape = Ellipse "
+                 "topology (Physical Horizontal Array, Arc / Broadside Steering, or either "
+                 "Arc Hybrid).")
 
     def _venue_far_arc(self):
         try:
@@ -1044,22 +1228,73 @@ class App(tk.Tk):
             return None, None
         return far, arc_from_far(far)
 
+    def _venue_is_ellipse(self) -> bool:
+        return self.topology.get() in ELLIPSE_TOPOLOGIES and self.shape.get() == SHAPE_ELLIPSE
+
     def _update_venue_far(self):
         far, arc = self._venue_far_arc()
+        is_ellipse = self._venue_is_ellipse()
         if far is None:
             self.venue_far_label.config(text="FAR: -  arc: -")
+        elif arc is None and is_ellipse:
+            # The plain circle has no solution below FAR = 1, but Ellipse mode
+            # does (angle pins at 180 deg, Ellipse ratio flattens instead) --
+            # show that instead of a bare "n/a" here, or this label would
+            # contradict what "Set arc" is about to actually do.
+            ellipse_arc = angle_from_far_ellipse(far)
+            self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: {ellipse_arc:.1f}°")
         elif arc is None:
             self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: n/a")
         else:
             self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: {arc:.1f}°")
 
+        if is_ellipse:
+            ratio = ellipse_ratio_from_far(far)
+            self.venue_ellipse_label.config(
+                text=f"ellipse ratio: {ratio:.3f}" if ratio is not None else "ellipse ratio: -")
+
     def _set_arc_from_venue(self):
-        _, arc = self._venue_far_arc()
+        """Applies the venue-solved arc angle to whichever topology is
+        already active, if that topology's Angle means an actual
+        coverage arc (ANGLE_TOPOLOGIES: Arc / Broadside Steering, either
+        Arc Hybrid, Physical Horizontal Array, Progressive Arc). Only
+        topology-switches (to Arc / Broadside Steering, the old default)
+        when starting from something with no Angle at all (End-Fire,
+        Gradient, Focus Point, Manual). This used to always force Arc /
+        Broadside Steering unconditionally, which silently discarded an
+        Arc Hybrid selection (and its Row spacing) every time -- fixed
+        so "Set arc" no longer knocks you out of a topology you were
+        already on, Physical Horizontal Array and Progressive Arc
+        included (both also need their own Radius, but that's a
+        separate, already-set field -- no reason to abandon them for it).
+
+        Only ever touches Angle -- for a Shape = Ellipse topology, it
+        uses angle_from_far_ellipse instead of the plain circle's
+        arc_from_far so it still has an answer for FAR < 1 (a venue
+        wider than it is deep, where the circle has none), but Ellipse
+        ratio itself is a separate action -- see "Use" below -- so the
+        two can be applied independently (e.g. dial in Angle by hand but
+        still want the venue-implied ratio, or vice versa)."""
+        far, arc = self._venue_far_arc()
+        if self._venue_is_ellipse():
+            arc = angle_from_far_ellipse(far)
         if arc is None:
             return
-        self.topology.set(TOPO_ARC)
-        self._on_topology_change()
+        if self.topology.get() not in ANGLE_TOPOLOGIES:
+            self.topology.set(TOPO_ARC)
+            self._on_topology_change()
         self.angle.set(round(min(arc, 180.0), 1))
+        self._on_change()
+
+    def _use_venue_ellipse_ratio(self):
+        """Applies the venue-solved Ellipse ratio (ellipse_ratio_from_far)
+        to whichever Ellipse-capable topology is active, independently of
+        "Set arc" above -- see its docstring for why they're separate."""
+        far, _ = self._venue_far_arc()
+        ratio = ellipse_ratio_from_far(far)
+        if ratio is None:
+            return
+        self.ellipse_ratio.set(round(ratio, 3))
         self._on_change()
 
     # --------------------------------------------------------- bandwidth --
@@ -1082,7 +1317,21 @@ class App(tk.Tk):
 
         self._help_icon(frm, row=0, col=4,
                          text="Optimum spacing = fraction of a wavelength at the top of the passband "
-                              "(¼λ for end-fire/gradient, ½λ for arc steering) — the S.A.D. rule of thumb.")
+                              "(¼λ for End-Fire/Gradient, ½λ for Arc / Broadside Steering and the two Arc "
+                              "Hybrids, applied to their column spacing) — the S.A.D. rule of thumb.")
+
+        self.row_optimum_label = ttk.Label(frm, text="optimum row spacing (¼λ): -", width=28)
+        self.row_optimum_label.grid(row=1, column=2, sticky="w", padx=5, pady=5)
+
+        self.use_row_optimum_btn = ttk.Button(frm, text="Use", command=self._use_optimum_row_spacing)
+        self.use_row_optimum_btn.grid(row=1, column=3, sticky="w", padx=5, pady=5)
+
+        self.row_optimum_help = self._help_icon(
+            frm, row=1, col=4,
+            text="Optimum Row spacing for the two Arc Hybrids -- always ¼ wavelength at the same "
+                 "High (Hz) above, the End-Fire/Gradient rule, since Row spacing is that same "
+                 "front/rear pair depth inside each column, regardless of the ½λ rule used for "
+                 "the column Spacing above.")
 
     def _wavelength_fraction(self):
         return WAVELENGTH_FRACTION.get(self.topology.get())
@@ -1097,6 +1346,20 @@ class App(tk.Tk):
             return
         if opt is not None:
             self.spacing.set(round(opt, 3))
+            self._on_change()
+
+    def _use_optimum_row_spacing(self):
+        """Row spacing is always the End-Fire/Gradient-style front/rear pair
+        depth inside a column, regardless of the topology's own column
+        Spacing rule (½λ for the Arc Hybrids) -- so this is always ¼λ,
+        not looked up via WAVELENGTH_FRACTION/_wavelength_fraction like
+        _use_optimum_spacing above."""
+        try:
+            opt = spacing_at_wavelength_fraction(self.freq_high.get(), self._speed_of_sound(), 0.25)
+        except tk.TclError:
+            return
+        if opt is not None:
+            self.row_spacing.set(round(opt, 3))
             self._on_change()
 
     # -------------------------------------------------------------- info --
@@ -1345,26 +1608,53 @@ class App(tk.Tk):
         is_arc = topo == TOPO_ARC
         is_physical = topo == TOPO_PHYSICAL
         is_gradient = topo == TOPO_GRADIENT
-        uses_angle = is_arc or is_physical
+        is_hybrid = topo in ARC_HYBRID_TOPOLOGIES
+        is_progressive = topo == TOPO_PROGRESSIVE
+        is_focus = topo == TOPO_FOCUS
+        is_ellipse_capable = topo in ELLIPSE_TOPOLOGIES
+        is_ellipse = is_ellipse_capable and self.shape.get() == SHAPE_ELLIPSE
+        uses_angle = topo in ANGLE_TOPOLOGIES
+        uses_steer = is_arc or is_hybrid
+        uses_radius = is_physical or is_progressive
+        no_spacing = is_physical or is_manual or is_progressive
 
         self._set_widgets_visible(
             (self.angle_label, self.angle_spin, self.angle_slider, self.far_label), uses_angle)
-        self._set_widgets_visible((self.radius_label, self.radius_spin), is_physical)
+        self._set_widgets_visible((self.radius_label, self.radius_spin), uses_radius)
         self._set_widgets_visible(
-            (self.steer_label, self.steer_spin, self.steer_slider, self.steer_help), is_arc)
+            (self.steer_label, self.steer_spin, self.steer_slider, self.steer_help), uses_steer)
         self._set_widgets_visible(
             (self.spacing_label, self.spacing_spin, self.spacing_slider, self.wavelength_label),
-            not (is_physical or is_manual))
+            not no_spacing)
+        self._set_widgets_visible(
+            (self.row_spacing_label, self.row_spacing_spin, self.row_spacing_slider,
+             self.row_wavelength_label, self.row_spacing_help), is_hybrid)
+        self._set_widgets_visible(
+            (self.row_optimum_label, self.use_row_optimum_btn, self.row_optimum_help), is_hybrid)
+        self._set_widgets_visible((self.shape_label, self.shape_cb), is_ellipse_capable)
+        self._set_widgets_visible(
+            (self.ellipse_ratio_label, self.ellipse_ratio_spin, self.ellipse_ratio_slider,
+             self.ellipse_ratio_help), is_ellipse)
+        self._set_widgets_visible(
+            (self.venue_ellipse_label, self.use_venue_ellipse_btn, self.venue_ellipse_help), is_ellipse)
+        self._set_widgets_visible(
+            (self.progression_label, self.progression_spin, self.progression_slider,
+             self.progression_help), is_progressive)
+        self._set_widgets_visible(
+            (self.focus_x_label, self.focus_x_spin, self.focus_y_label, self.focus_y_spin,
+             self.focus_help), is_focus)
         if uses_angle:
             self.venue_frame.pack(fill="x", padx=10, pady=5, before=self.dimensions_frame)
             self.taper_frame.pack(fill="x", padx=10, pady=5, before=self.bandwidth_frame)
         else:
             self.venue_frame.pack_forget()
             self.taper_frame.pack_forget()
-        self.count_label.config(text="Pairs" if is_gradient else "Subs")
+        self.count_label.config(text="Columns" if is_hybrid else "Pairs" if is_gradient else "Subs")
         if is_gradient:
             max_count = MAX_SUBS // 2
-        elif is_physical or is_arc or is_manual:
+        elif is_hybrid:
+            max_count = MAX_SUBS_SPATIAL // 2
+        elif is_physical or is_arc or is_manual or is_progressive or is_focus:
             max_count = MAX_SUBS_SPATIAL
         else:
             max_count = MAX_SUBS
@@ -1384,7 +1674,11 @@ class App(tk.Tk):
                                          "count. Every element is already equidistant from the arc's centre, "
                                          "so delay is fixed at 0 by design; gain trim defaults to 0 but can "
                                          "still be tapered (Level taper panel below) for sidelobe control. The "
-                                         "real output here is the physical layout in the X/Y/Rotation columns.",
+                                         "real output here is the physical layout in the X/Y/Rotation columns."
+                                         + (" Shape = Ellipse scales depth only (lateral and total coverage "
+                                            "unchanged) by Ellipse ratio -- this app's own extension, not part "
+                                            "of S.A.D.; Rotation is fixed at 0° for this shape (not computed)."
+                                            if is_ellipse else ""),
             TOPO_ARC: "Sub 1..N along a line, all normal polarity. Delay is symmetric — "
                                         "0 ms at the centre element(s), increasing towards both edges — as if "
                                         "the line were physically bowed into an arc spanning the Arc angle "
@@ -1392,6 +1686,31 @@ class App(tk.Tk):
                                         "= 1/sin(arc/2), the depth:width ratio for that coverage angle. Steer "
                                         "redirects the whole arc off-centre for asymmetrical venues, without "
                                         "changing the coverage angle.",
+            TOPO_EF_ARC_HYBRID: "Each column = a front/rear End-Fire pair (1:1), and the columns themselves "
+                     "are arc-steered like Arc / Broadside Steering. Within a column: rear = 0 ms reference, "
+                     "front = + Row spacing/speed of sound, both normal polarity. Column-to-column delay is "
+                     "the same symmetric arc-steering pattern as Arc / Broadside Steering, added underneath "
+                     "each column's own front/rear offset. Spacing = column-to-column (lateral); Row spacing "
+                     "= front-to-back depth within a column.",
+            TOPO_GRAD_ARC_HYBRID: "Each column = a front/rear Gradient (cardioid) pair (1:1), and the columns "
+                     "themselves are arc-steered like Arc / Broadside Steering. Within a column: front = 0 ms, "
+                     "normal polarity; rear = + Row spacing/speed of sound, reversed polarity — the same "
+                     "broadband rear null as Gradient / Cardioid Pairs, per column. Column-to-column delay is "
+                     "the same symmetric arc-steering pattern as Arc / Broadside Steering, added underneath "
+                     "each column's own front/rear offset. Spacing = column-to-column (lateral); Row spacing "
+                     "= front-to-back depth within a column.",
+            TOPO_PROGRESSIVE: "Same physical model as Physical Horizontal Array (every element equidistant "
+                     "from one center of curvature on a real arc of the given Radius, so delay stays fixed "
+                     "at 0 and Rotation is the true local aim angle) but with a non-uniform angular step "
+                     "between adjacent elements instead of a constant one -- Progression sets the center:edge "
+                     "step ratio (1.0 = uniform, identical to Physical Horizontal Array). Above 1.0 the center "
+                     "gap(s) widen and the edge gaps narrow, so total coverage angle (and FAR) is unchanged. "
+                     "This app's own extension, not part of S.A.D.",
+            TOPO_FOCUS: "\"Destruction Mode\": elements in a straight line (same physical layout as Arc / "
+                     "Broadside Steering), all delayed so their output arrives at one target point (Focus X/Y) "
+                     "at the same instant, for maximum constructive buildup there. Near-field acoustic "
+                     "focusing -- exact by construction from geometry alone, not an approximation. This app's "
+                     "own extension, not a S.A.D. topology.",
             TOPO_MANUAL: "Place each sub freely: type X (depth, front-to-back — larger/less-negative is closer "
                      "to the audience) and Y (lateral, informational only) directly. Delay is derived, not "
                      "typed — the rearmost placed sub (smallest X) is the 0 ms reference, same plane-wave-"
@@ -1400,12 +1719,21 @@ class App(tk.Tk):
         }
         self.note.config(text=notes[topo])
 
-        n = self.count.get() * (2 if is_gradient else 1)
+        n = self.count.get() * (2 if (is_gradient or is_hybrid) else 1)
         self._rebuild_rows(n, editable_all=is_manual)
+        self._update_venue_far()  # its "arc" readout depends on topology/Shape now (Ellipse's FAR<1 case)
         self._on_change()
         self._fit_window_height()
 
     def _on_count_change(self):
+        self._on_topology_change()
+
+    def _on_shape_change(self):
+        """Shape (Circle/Ellipse -- Physical Horizontal Array, Arc /
+        Broadside Steering, or either Arc Hybrid) changes which layout/
+        delay function is used and the note text -- _on_topology_change
+        already branches on it (is_ellipse), so re-running it is the
+        simplest way to refresh everything in sync."""
         self._on_topology_change()
 
     def _on_change(self, *_):
@@ -1417,7 +1745,12 @@ class App(tk.Tk):
         self._sync_level_taper()
         subs = self._compute()
         self._update_table(subs)
-        if self.topology.get() == TOPO_ARC:
+        if self.topology.get() in ANGLE_TOPOLOGIES:
+            # FAR is a pure function of Angle regardless of topology, but this
+            # readout used to only refresh for TOPO_ARC specifically -- stale
+            # (or blank) on Physical Horizontal Array, Progressive Arc, and
+            # both Arc Hybrids ever since the FAR label itself was extended to
+            # show for all of ANGLE_TOPOLOGIES, not just Arc / Broadside Steering.
             far = forward_aspect_ratio(self.angle.get())
             self.far_label.config(text=f"FAR: {far:.2f}" if far is not None else "FAR: ∞")
         self._update_wavelength_readouts()
@@ -1451,6 +1784,28 @@ class App(tk.Tk):
             self.optimum_label.config(text=f"optimum spacing ({label}): {opt:.3f} m" if opt else "optimum spacing: -")
             self.use_optimum_btn.config(state="normal")
 
+        if self.topology.get() in ARC_HYBRID_TOPOLOGIES:
+            try:
+                f_row = freq_at_wavelength_fraction(self.row_spacing.get(), self._speed_of_sound(), 0.25)
+            except tk.TclError:
+                f_row = None
+            self.row_wavelength_label.config(text=f"¼λ: {f_row:.1f} Hz" if f_row else "-")
+
+            try:
+                row_opt = spacing_at_wavelength_fraction(self.freq_high.get(), self._speed_of_sound(), 0.25)
+            except tk.TclError:
+                row_opt = None
+            self.row_optimum_label.config(
+                text=f"optimum row spacing (¼λ): {row_opt:.3f} m" if row_opt else "optimum row spacing: -")
+
+    def _ellipse_depth_scale(self) -> float:
+        """1.0 (a plain circle) unless the active topology is
+        Ellipse-capable and Shape = Ellipse is actually selected --
+        shared by every ELLIPSE_TOPOLOGIES compute() branch."""
+        if self.topology.get() in ELLIPSE_TOPOLOGIES and self.shape.get() == SHAPE_ELLIPSE:
+            return self.ellipse_ratio.get()
+        return 1.0
+
     def _compute(self):
         topo = self.topology.get()
         try:
@@ -1461,9 +1816,26 @@ class App(tk.Tk):
                 return gradient_cardioid(self.count.get(), self.spacing.get(), self._speed_of_sound(), trims)
             if topo == TOPO_ARC:
                 return arc_steering(self.count.get(), self.spacing.get(), self.angle.get(), self._speed_of_sound(),
-                                     trims, self.steer.get())
+                                     trims, self.steer.get(), self._ellipse_depth_scale())
             if topo == TOPO_PHYSICAL:
                 return physical_horizontal_array(self.count.get(), trims)
+            if topo == TOPO_EF_ARC_HYBRID:
+                return end_fire_arc_hybrid(self.count.get(), self.spacing.get(), self.row_spacing.get(),
+                                            self.angle.get(), self._speed_of_sound(), trims, self.steer.get(),
+                                            self._ellipse_depth_scale())
+            if topo == TOPO_GRAD_ARC_HYBRID:
+                return gradient_arc_hybrid(self.count.get(), self.spacing.get(), self.row_spacing.get(),
+                                            self.angle.get(), self._speed_of_sound(), trims, self.steer.get(),
+                                            self._ellipse_depth_scale())
+            if topo == TOPO_PROGRESSIVE:
+                # Every element is still exactly Radius from one center of
+                # curvature (see progressive_arc_layout) -- same physics as
+                # Physical Horizontal Array, so the same zero-delay function
+                # applies regardless of the angular progression.
+                return physical_horizontal_array(self.count.get(), trims)
+            if topo == TOPO_FOCUS:
+                return focus_point(self.count.get(), self.spacing.get(), self.focus_x.get(), self.focus_y.get(),
+                                    self._speed_of_sound(), trims)
             if topo == TOPO_MANUAL:
                 n = self.count.get()
                 xs = [v.get() for v in self.manual_x_vars]
@@ -1477,7 +1849,7 @@ class App(tk.Tk):
 
     def _compute_positions(self):
         topo = self.topology.get()
-        if topo == TOPO_PHYSICAL:
+        if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
             return [lateral for _, lateral, _ in self._compute_physical_layout()]
         if topo == TOPO_MANUAL:
             try:
@@ -1490,15 +1862,21 @@ class App(tk.Tk):
             return []
         if topo == TOPO_GRADIENT:
             return sub_positions_gradient(self.count.get(), spacing)
-        if topo == TOPO_ARC:
+        if topo == TOPO_ARC or topo == TOPO_FOCUS:
             return sub_positions_centered(self.count.get(), spacing)
+        if topo in ARC_HYBRID_TOPOLOGIES:
+            return sub_positions_arc_hybrid_lateral(self.count.get(), spacing)
         return sub_positions(self.count.get(), spacing)
 
     def _compute_physical_layout(self):
         """(depth, lateral, rotation) per sub -- real geometry for
-        Physical Horizontal Array and Manual (from free X/Y placement,
-        rotation always 0 -- no directivity model), (0, 0, 0) for every
-        other topology."""
+        Physical Horizontal Array (Circle or Ellipse Shape) and
+        Progressive Arc (all via array_math's layout functions),
+        Manual (from free X/Y placement, rotation always 0 -- no
+        directivity model), the Arc Hybrids (front/rear depth per
+        column, rotation always 0 -- physically a straight line, only
+        electronically arc-steered, same as Arc / Broadside Steering),
+        (0, 0, 0) for every other topology."""
         try:
             n = self.count.get()
         except tk.TclError:
@@ -1509,11 +1887,25 @@ class App(tk.Tk):
                 return [(x.get(), y.get(), 0.0) for x, y in zip(self.manual_x_vars, self.manual_y_vars)]
             except tk.TclError:
                 return [(0.0, 0.0, 0.0)] * n
+        if topo in ARC_HYBRID_TOPOLOGIES:
+            try:
+                depths = sub_positions_arc_hybrid_depth(n, self.row_spacing.get())
+                laterals = sub_positions_arc_hybrid_lateral(n, self.spacing.get())
+            except tk.TclError:
+                return [(0.0, 0.0, 0.0)] * (n * 2)
+            return [(d, y, 0.0) for d, y in zip(depths, laterals)]
+        if topo == TOPO_PROGRESSIVE:
+            try:
+                return progressive_arc_layout(n, self.radius.get(), self.angle.get(), self.progression_ratio.get())
+            except tk.TclError:
+                return [(0.0, 0.0, 0.0)] * n
         if topo != TOPO_PHYSICAL:
             if topo == TOPO_GRADIENT:
                 n *= 2
             return [(0.0, 0.0, 0.0)] * n
         try:
+            if self.shape.get() == SHAPE_ELLIPSE:
+                return physical_ellipse_layout(n, self.radius.get(), self.angle.get(), self.ellipse_ratio.get())
             return physical_arc_layout(n, self.radius.get(), self.angle.get())
         except tk.TclError:
             return [(0.0, 0.0, 0.0)] * n

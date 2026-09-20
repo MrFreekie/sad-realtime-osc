@@ -8,6 +8,22 @@ without the polar/SPL prediction plots. Credit to Merlijn van Veen
 element closest to the audience ("front"); higher numbers sit further
 back, except for Arc / Broadside Steering, which is symmetric about the
 array's center -- see arc_steering and sub_positions_centered.
+
+end_fire_arc_hybrid and gradient_arc_hybrid are this app's own extension,
+not part of S.A.D.: End-Fire/Gradient front-rear pairs arranged as
+arc-steered columns, combining Arc / Broadside Steering's horizontal
+pattern control with each column's own front-to-back directivity. No
+tutorial ground truth to verify these two against -- see their
+docstrings and README.md.
+
+physical_ellipse_layout and the depth_scale parameter on
+_arc_column_delays_s / arc_steering / end_fire_arc_hybrid /
+gradient_arc_hybrid were inspired by the Ellipse shape option in Rafael
+Gomes Pereira's SubArray Vizualizer (BETA1.1d), a separate third-party
+freeware calculator -- only its public interface was ever looked at
+(its own calculation engine is deliberately hidden/password-protected
+by its author), so the actual math here is this app's own derivation,
+not a reimplementation. See README.md's Credits section.
 """
 from dataclasses import dataclass
 import math
@@ -113,8 +129,54 @@ def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_
     return out
 
 
+def _arc_column_delays_s(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
+                          steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[float]:
+    """Per-column delay, seconds, for n columns spaced spacing_m apart in a
+    straight line, delayed as if positioned on a physical arc spanning
+    angle_deg (S.A.D.'s "delayed horizontal array"), optionally aimed
+    off-center by steer_deg -- the shared core of arc_steering and the
+    two Arc Hybrid topologies (end_fire_arc_hybrid, gradient_arc_hybrid),
+    which layer this same column-to-column steering delay on top of each
+    column's own internal front/rear delay. See arc_steering's docstring
+    for the geometry and verification detail; this is that function's
+    math extracted so the hybrids don't have to duplicate it. Always
+    zero-referenced (min = 0 s), since a real delay line can't go
+    negative.
+
+    depth_scale is Ellipse mode's ratio (see physical_ellipse_layout,
+    the same idea applied to a physical placement rather than a virtual
+    delay curve): it scales only the curvature term (the sagitta,
+    radius*(1-cos phi)), not the steer_depth term -- steering is a plain
+    linear ramp across the line regardless of how deep the array's own
+    virtual bow is, so it stays unscaled. depth_scale = 1.0 (default)
+    reproduces the plain circle exactly."""
+    if n <= 1 or (angle_deg <= 0 and steer_deg == 0):
+        return [0.0] * n
+
+    center = (n - 1) / 2.0
+    if angle_deg > 0:
+        d_phi = math.radians(angle_deg) / (n - 1)
+        half_step = d_phi / 2.0
+        radius = spacing_m / (2.0 * math.sin(half_step)) if math.sin(half_step) != 0 else 0.0
+    else:
+        d_phi = 0.0
+        radius = 0.0
+
+    steer_rad = math.radians(steer_deg)
+    raw_delays_s = []
+    for i in range(n):
+        phi = (i - center) * d_phi
+        depth = depth_scale * radius * (1.0 - math.cos(phi)) if radius else 0.0
+        x = (i - center) * spacing_m
+        steer_depth = -x * math.sin(steer_rad)
+        raw_delays_s.append((depth + steer_depth) / speed_mps)
+
+    zero = min(raw_delays_s)
+    return [d - zero for d in raw_delays_s]
+
+
 def arc_steering(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
-                  gain_trim_db=None, steer_deg: float = 0.0) -> list[SubOutput]:
+                  gain_trim_db=None, steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[SubOutput]:
     """S.A.D.'s "delayed horizontal array": n elements physically in a
     straight line, delayed as if positioned on a physical arc spanning
     angle_deg. The pattern is symmetric -- minimum (0 ms) at the center
@@ -139,31 +201,89 @@ def arc_steering(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
     convention as sub_positions_centered) on top of the arc's own
     curvature; positive steer_deg aims toward the higher-numbered end of
     the array. The combined profile is then re-zeroed so the earliest
-    element is still 0 ms, since a real delay line can't go negative."""
+    element is still 0 ms, since a real delay line can't go negative.
+
+    depth_scale is Ellipse mode's electronic equivalent of
+    physical_ellipse_layout's ratio -- this topology is physically a
+    straight line regardless (only the virtual curvature used for delay
+    changes), so there's no placement/rotation to touch, just the delay
+    curve's depth. 1.0 (default) reproduces the plain circle exactly --
+    see _arc_column_delays_s."""
     trims = gain_trim_db or [0.0] * n
-    if n <= 1 or (angle_deg <= 0 and steer_deg == 0):
-        return [SubOutput(i + 1, 0.0, trims[i], False) for i in range(n)]
+    delays_s = _arc_column_delays_s(n, spacing_m, angle_deg, speed_mps, steer_deg, depth_scale)
+    return [SubOutput(i + 1, delays_s[i] * 1000.0, trims[i], False) for i in range(n)]
 
-    center = (n - 1) / 2.0
-    if angle_deg > 0:
-        d_phi = math.radians(angle_deg) / (n - 1)
-        half_step = d_phi / 2.0
-        radius = spacing_m / (2.0 * math.sin(half_step)) if math.sin(half_step) != 0 else 0.0
-    else:
-        d_phi = 0.0
-        radius = 0.0
 
-    steer_rad = math.radians(steer_deg)
-    raw_delays_s = []
-    for i in range(n):
-        phi = (i - center) * d_phi
-        depth = radius * (1.0 - math.cos(phi)) if radius else 0.0
-        x = (i - center) * spacing_m
-        steer_depth = -x * math.sin(steer_rad)
-        raw_delays_s.append((depth + steer_depth) / speed_mps)
+def end_fire_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: float,
+                         angle_deg: float, speed_mps: float, gain_trim_db=None,
+                         steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[SubOutput]:
+    """Arc / Broadside Steering, but every column is itself a front/rear
+    End-Fire pair instead of a single element -- horizontal pattern
+    control (arc steering across n_columns, see _arc_column_delays_s)
+    combined with each column's own front-to-back directivity (End-Fire's
+    forward reinforcement / rear cancellation). Kept 1:1 front:back per
+    column -- this app does no polar/SPL prediction, so there's no way to
+    verify an asymmetric front:back ratio against, unlike a plotting tool.
 
-    zero = min(raw_delays_s)
-    return [SubOutput(i + 1, (raw_delays_s[i] - zero) * 1000.0, trims[i], False) for i in range(n)]
+    Within a column, the rear element is the 0 ms reference and the front
+    element carries an extra row_spacing_m/speed_mps on top -- same
+    convention as end_fire's 2-element case -- added to that column's own
+    arc-steering delay. Both elements in a column share the column's
+    normal polarity (no cardioid null; see gradient_arc_hybrid for that).
+
+    depth_scale is Ellipse mode's electronic depth ratio, same meaning
+    and default as arc_steering's -- applied to the column-to-column
+    curvature only, not the row_spacing_m front/rear offset.
+
+    Returns 2*n_columns SubOutputs, ordered front/rear per column (odd =
+    front, even = rear -- same pairing convention as gradient_cardioid)."""
+    n = n_columns * 2
+    trims = gain_trim_db or [0.0] * n
+    column_delays_s = _arc_column_delays_s(n_columns, column_spacing_m, angle_deg, speed_mps,
+                                            steer_deg, depth_scale)
+    row_delay_ms = row_spacing_m / speed_mps * 1000.0
+    out = []
+    for c in range(n_columns):
+        front_idx, rear_idx = c * 2 + 1, c * 2 + 2
+        base_ms = column_delays_s[c] * 1000.0
+        out.append(SubOutput(front_idx, base_ms + row_delay_ms, trims[front_idx - 1], False))
+        out.append(SubOutput(rear_idx, base_ms, trims[rear_idx - 1], False))
+    return out
+
+
+def gradient_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: float,
+                         angle_deg: float, speed_mps: float, gain_trim_db=None,
+                         steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[SubOutput]:
+    """Arc / Broadside Steering, but every column is itself a front/rear
+    Gradient (cardioid) pair instead of a single element -- horizontal
+    pattern control (arc steering across n_columns) combined with each
+    column's own broadband rear null (Gradient's front 0 ms/normal
+    polarity, rear delayed/reversed). Kept 1:1 per column, same reasoning
+    as end_fire_arc_hybrid.
+
+    Within a column, front is the 0 ms/normal-polarity reference and rear
+    carries an extra row_spacing_m/speed_mps on top, reversed polarity --
+    same convention as gradient_cardioid's pair -- added to that column's
+    own arc-steering delay.
+
+    depth_scale is Ellipse mode's electronic depth ratio, same meaning
+    and default as arc_steering's -- applied to the column-to-column
+    curvature only, not the row_spacing_m front/rear offset.
+
+    Returns 2*n_columns SubOutputs, ordered front/rear per column, same
+    convention as end_fire_arc_hybrid."""
+    n = n_columns * 2
+    trims = gain_trim_db or [0.0] * n
+    column_delays_s = _arc_column_delays_s(n_columns, column_spacing_m, angle_deg, speed_mps,
+                                            steer_deg, depth_scale)
+    row_delay_ms = row_spacing_m / speed_mps * 1000.0
+    out = []
+    for c in range(n_columns):
+        front_idx, rear_idx = c * 2 + 1, c * 2 + 2
+        base_ms = column_delays_s[c] * 1000.0
+        out.append(SubOutput(front_idx, base_ms, trims[front_idx - 1], False))
+        out.append(SubOutput(rear_idx, base_ms + row_delay_ms, trims[rear_idx - 1], True))
+    return out
 
 
 def physical_horizontal_array(n: int, gain_trim_db=None) -> list[SubOutput]:
@@ -213,6 +333,148 @@ def physical_arc_chord_spacing(n: int, radius_m: float, angle_deg: float):
         return None
     d_phi = angle_deg / (n - 1)
     return 2.0 * radius_m * math.sin(math.radians(d_phi) / 2.0)
+
+
+def min_adjacent_chord(layout) -> float:
+    """Smallest straight-line distance between two physically adjacent
+    elements in a (depth_m, lateral_m, rotation_deg) layout list -- the
+    physical-gap collision check for layouts (Ellipse, Progressive Arc)
+    whose element-to-element spacing isn't constant like the plain
+    circle's (physical_arc_chord_spacing), so it has to be measured
+    directly from the actual placed coordinates instead of derived from
+    a single angular step. None for fewer than 2 elements."""
+    if len(layout) < 2:
+        return None
+    return min(
+        math.hypot(layout[i + 1][0] - layout[i][0], layout[i + 1][1] - layout[i][1])
+        for i in range(len(layout) - 1))
+
+
+def physical_ellipse_layout(n: int, radius_m: float, angle_deg: float, ratio: float = 1.0):
+    """(depth_m, lateral_m, rotation_deg) for each of n elements placed on
+    a real ELLIPTICAL arc -- physical_arc_layout generalized with a
+    depth-scale ratio (b/a): lateral is unchanged (radius_m·sin phi, same
+    as the circle, so the array still spans the same width for a given
+    Spacing/Angle/count), and depth is scaled by `ratio` on top of the
+    circle's own sagitta (radius_m·(1-cos phi)):
+
+        depth = -ratio * radius_m * (1 - cos phi)
+
+    ratio = 1.0 reproduces physical_arc_layout exactly (a true circle).
+    ratio < 1 flattens the bow (shallower than a true circle of that
+    radius); ratio > 1 exaggerates it. This app's own extension, not
+    part of S.A.D. -- no tutorial ground truth to check it against,
+    unlike the plain circle above.
+
+    Rotation is always 0.0 here, unlike physical_arc_layout's phi_deg --
+    a true ellipse's aim direction is the local tangent/normal, not the
+    parametric angle, and by design this app doesn't compute that (subs
+    are treated as omnidirectional enough at these frequencies that aim
+    rotation isn't worth tracking for this shape)."""
+    if n <= 1 or angle_deg <= 0:
+        return [(0.0, 0.0, 0.0) for _ in range(n)]
+    d_phi = angle_deg / (n - 1)
+    center = (n - 1) / 2.0
+    out = []
+    for i in range(n):
+        phi = math.radians((center - i) * d_phi)
+        lateral = radius_m * math.sin(phi)
+        depth = -ratio * radius_m * (1.0 - math.cos(phi))
+        out.append((depth, lateral, 0.0))
+    return out
+
+
+def ellipse_ratio_from_far(far):
+    """Depth-scale ratio (see physical_ellipse_layout) for venue-linked
+    Ellipse mode: 1.0 (a full circle-equivalent bow) at FAR >= 1, where
+    the plain circle already covers the venue fine -- shrinking
+    proportionally to FAR itself below 1 (venue wider than it is deep),
+    flattening the bow as the room gets relatively wider, approaching a
+    flat line as FAR -> 0. Continuous at FAR = 1 (both branches give
+    1.0) and, unlike arc_from_far, always defined for any FAR > 0 -- the
+    point of Ellipse mode is exactly to cover the wide/shallow venues
+    the plain circle can't (arc_from_far returns None below FAR = 1)."""
+    if far is None or far <= 0:
+        return None
+    return min(1.0, far)
+
+
+def angle_from_far_ellipse(far):
+    """Arc angle for venue-linked Ellipse mode: identical to
+    arc_from_far for FAR >= 1 (so Ellipse mode matches the plain circle
+    exactly whenever the circle already has an answer), and pinned at
+    this app's own 180 degree Angle maximum for FAR < 1, where
+    arc_from_far has no solution at all -- a venue wider than it is deep
+    needs (up to) the fullest spread this app allows; it's
+    ellipse_ratio_from_far's shrinking ratio that actually adapts the
+    bow depth to just how wide. Continuous at FAR = 1: arc_from_far(1)
+    is already exactly 180 degrees, matching the pinned branch below it."""
+    if far is None or far <= 0:
+        return None
+    if far >= 1.0:
+        return arc_from_far(far)
+    return 180.0
+
+
+def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: float = 1.0):
+    """(depth_m, lateral_m, rotation_deg) for n elements on a real
+    circular arc of radius_m spanning angle_deg (same physical model as
+    physical_arc_layout -- every element is still exactly radius_m from
+    one center of curvature, so delay stays 0 for all of them, same as
+    physical_horizontal_array), but with a non-uniform angular step
+    between adjacent elements instead of physical_arc_layout's constant
+    one -- a "J-array"-style progressive spread. This app's own
+    extension, not part of S.A.D. -- no tutorial ground truth to check
+    it against.
+
+    `ratio` (>= 1.0) is the angular step at the array's center divided
+    by the step at its edges: ratio = 1.0 reproduces physical_arc_layout
+    exactly (uniform steps); ratio > 1 makes the center step
+    progressively larger (tighter curvature there) and the edge steps
+    progressively smaller (flatter, longer throw down the flanks) --
+    chosen over the opposite direction since a flatter flank throws
+    further for the same element count, while the tighter center adds
+    near-field pattern control where the audience is already closest.
+    The per-gap steps are linearly interpolated between center and edge
+    weight and renormalized so they still sum to exactly angle_deg, so
+    total coverage angle (and FAR) is unaffected by ratio.
+
+    Rotation is still the local parametric angle (phi_deg), same as
+    physical_arc_layout and for the same reason it's valid there: every
+    element sits on the one true circle of radius_m, just at a
+    non-uniformly chosen angular position on it, so the tangent/normal
+    direction is still exactly phi_deg -- unlike the ellipse above,
+    there's no shape distortion that would break that equivalence."""
+    if n <= 1 or angle_deg <= 0:
+        return [(0.0, 0.0, 0.0) for _ in range(n)]
+    if n == 2 or ratio <= 1.0:
+        return physical_arc_layout(n, radius_m, angle_deg)
+
+    gaps = n - 1
+    center_gap = (gaps - 1) / 2.0
+    # Per-gap weight: 1.0 at the edges, `ratio` at the center gap(s),
+    # linearly interpolated in between by how close each gap is to center.
+    half_span = max(center_gap, 1e-9)
+    weights = [1.0 + (ratio - 1.0) * (1.0 - abs(g - center_gap) / half_span) for g in range(gaps)]
+    total_weight = sum(weights)
+    d_phis = [angle_deg * w / total_weight for w in weights]
+
+    # Cumulative angular position of each element, edge to edge, then
+    # re-centered so the layout is symmetric about 0 -- same convention
+    # as physical_arc_layout (element 1 at the most positive position).
+    raw_phi = [0.0]
+    for d_phi in d_phis:
+        raw_phi.append(raw_phi[-1] + d_phi)
+    mid = raw_phi[-1] / 2.0
+    phis_deg = [mid - p for p in raw_phi]
+
+    out = []
+    for phi_deg in phis_deg:
+        phi = math.radians(phi_deg)
+        lateral = radius_m * math.sin(phi)
+        depth = -radius_m * (1.0 - math.cos(phi))
+        out.append((depth, lateral, phi_deg))
+    return out
 
 
 def forward_aspect_ratio(angle_deg: float):
@@ -292,6 +554,34 @@ def osc_to_gain_db(x: float) -> float:
 
 def manual(n: int, delays_ms, gains_db, polarities) -> list[SubOutput]:
     return [SubOutput(i + 1, delays_ms[i], gains_db[i], polarities[i]) for i in range(n)]
+
+
+def focus_point(n: int, spacing_m: float, focus_x_m: float, focus_y_m: float,
+                 speed_mps: float, gain_trim_db=None) -> list[SubOutput]:
+    """Near-field acoustic focusing ("Destruction Mode"): n elements in a
+    straight line (same physical layout as Arc / Broadside Steering --
+    evenly spaced, centered, sub_positions_centered's convention, all at
+    depth 0), delayed so every element's contribution arrives at one
+    target point (focus_x_m, focus_y_m -- focus_x_m out in front of the
+    line, focus_y_m lateral offset from its center) at the same instant,
+    for maximum constructive buildup there.
+
+    delay_i = (max_j distance_j - distance_i) / speed_mps -- the element
+    closest to the focus point (shortest travel time) is delayed the
+    most, since it has to "wait" for the sound from farther elements to
+    also arrive; the single farthest element is the 0 ms reference, same
+    zero-referencing idea as delays_from_depth. This is standard
+    near-field beamforming/focusing, not a S.A.D. topology -- this app's
+    own extension, verifiable directly from geometry (no tutorial ground
+    truth needed: it's exact by construction, not an approximation)."""
+    trims = gain_trim_db or [0.0] * n
+    if n <= 0:
+        return []
+    lateral = sub_positions_centered(n, spacing_m)
+    distances = [math.hypot(focus_x_m, focus_y_m - y) for y in lateral]
+    max_d = max(distances)
+    return [SubOutput(i + 1, (max_d - distances[i]) / speed_mps * 1000.0, trims[i], False)
+            for i in range(n)]
 
 
 def delays_from_depth(x_values_m, speed_mps: float) -> list[float]:
@@ -397,6 +687,30 @@ def sub_positions_gradient(pairs: int, spacing_m: float) -> list[float]:
     out = []
     for _ in range(pairs):
         out.extend([0.0, spacing_m])
+    return out
+
+
+def sub_positions_arc_hybrid_lateral(n_columns: int, column_spacing_m: float) -> list[float]:
+    """Lateral (Y) position for the Arc Hybrid topologies -- each column's
+    centered lateral position (sub_positions_centered), repeated twice
+    since the front and rear element of a column share the same lateral
+    position, differing only in depth (same reasoning as
+    sub_positions_gradient's side-by-side pairing, just centered on the
+    array like Arc / Broadside Steering instead of laid out end to end)."""
+    out = []
+    for y in sub_positions_centered(n_columns, column_spacing_m):
+        out.extend([y, y])
+    return out
+
+
+def sub_positions_arc_hybrid_depth(n_columns: int, row_spacing_m: float) -> list[float]:
+    """Depth (X) position for the Arc Hybrid topologies -- front row at 0
+    (closest to the audience), rear row at -row_spacing_m, repeated per
+    column -- same sign convention as End-Fire / Physical Horizontal
+    Array's X (<= 0, set-back relative to the front)."""
+    out = []
+    for _ in range(n_columns):
+        out.extend([0.0, -row_spacing_m])
     return out
 
 

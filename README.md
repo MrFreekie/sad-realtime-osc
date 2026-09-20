@@ -2,8 +2,10 @@
 
 A small desktop app that reimplements the delay/gain/polarity math behind
 Merlijn van Veen's Subwoofer Array Designer spreadsheet for four array
-topologies, without the polar/SPL prediction plots — just the three
-per-sub values, updated live and streamed out over OSC.
+topologies, plus five of this app's own extensions (two Arc Hybrids, an
+Ellipse shape, Progressive Arc, and Focus Point), without the polar/SPL
+prediction plots — just the three per-sub values, updated live and
+streamed out over OSC.
 
 ## Credits
 
@@ -22,6 +24,22 @@ reimplementation (no S.A.D. code or spreadsheet formulas were copied)
 built for live OSC output rather than the original's polar/SPL
 prediction plots — any errors in translation are this app's, not
 Merlijn van Veen's.
+
+The **Ellipse** shape (Physical Horizontal Array, Arc / Broadside
+Steering, and both Arc Hybrids) and the front/rear-pair-bent-into-an-arc
+idea behind the two **Arc Hybrid** topologies were inspired by
+**Rafael Gomes Pereira**'s **SubArray Vizualizer** (BETA1.1d) — a
+separate, third-party freeware calculator for the pro-audio community,
+and others' modifications on it since (the copy consulted here was last
+touched by contributor Costantino Pistidda). Only that tool's public
+front-sheet interface (input labels, shape dropdown, chart layout) was
+ever looked at — its own calculation engine is deliberately hidden and
+password-protected by its author to protect his formulas, and none of
+it was accessed, extracted, or reproduced here. Every formula behind
+Ellipse in this app (`physical_ellipse_layout`, `_arc_column_delays_s`'s
+`depth_scale`) was derived independently — see the topology notes below
+for each one's own "no tutorial ground truth to verify against" caveat,
+same honesty standard as the rest of this app's original extensions.
 
 ## Run
 
@@ -53,6 +71,26 @@ python sad_realtime_osc.py
   own tutorial — 10 elements, 70° arc: element 1 → depth -1.32 m,
   lateral 4.18 m, rotation 35.0°; element 5 → -0.02 m, 0.49 m, 3.9°,
   matching to the tutorial's displayed rounding throughout.
+
+  A **Shape** selector (also on Arc / Broadside Steering and the two Arc
+  Hybrids below — see their own entries) picks **Circle** (the above,
+  default) or **Ellipse** — this app's own extension, not part of
+  S.A.D., with no tutorial ground truth to verify it against. For
+  Physical Horizontal Array specifically, Ellipse keeps lateral
+  (`radius·sin φ`) and total coverage exactly as the circle would, and
+  scales *only* depth by a new **Ellipse ratio**
+  (`depth = ratio · radius·(1 − cos φ)`) — ratio = 1.0 reproduces the
+  circle exactly; below 1 flattens the bow, above 1 exaggerates it.
+  Rotation is fixed at **0°** for Ellipse (not computed) — a true
+  ellipse's aim direction is the local tangent, not the parametric
+  angle, and per-design this app treats subs as omnidirectional enough
+  at these frequencies that it isn't worth tracking for this shape
+  (`physical_ellipse_layout` in `array_math.py`). The Sub box dimensions
+  collision check switches from the circle's constant-chord formula to
+  measuring the actual minimum adjacent-element gap directly
+  (`min_adjacent_chord`), since an ellipse's chord isn't constant along
+  the array. See **Venue → arc (FAR)** below for how Ellipse links to
+  venue Length/Width, including venues the plain circle can't solve.
 - **Arc / Broadside Steering** — S.A.D.'s "delayed horizontal array": n
   elements physically in a straight line, delayed as if positioned on a
   physical arc spanning the Arc angle (0-180°). The delay pattern is
@@ -76,6 +114,83 @@ python sad_realtime_osc.py
   is still 0 ms. Positive steers towards the highest-numbered sub; 0 is
   the default symmetric aim, straight ahead. Works even with Arc angle
   at 0° (pure delay-steering of an otherwise flat line).
+
+  Also has the **Shape** selector: Circle (above) or **Ellipse**. Since
+  this topology is physically a straight line either way (only the
+  *virtual* curvature used for delay changes), Ellipse ratio scales just
+  the sagitta term inside `_arc_column_delays_s` — the electronic
+  equivalent of Physical Horizontal Array's `physical_ellipse_layout`,
+  same ratio, same effect on the pattern, no placement or rotation to
+  touch. Steer's own linear ramp is *not* scaled by Ellipse ratio — it's
+  a separate, independent superposition either way (see Steer above).
+  Ratio = 1.0 reproduces the plain circle exactly (verified bit-for-bit
+  against the tutorial numbers above, same as Circle).
+- **End-Fire Arc Hybrid** / **Gradient Arc Hybrid** — this app's own
+  extension, not part of S.A.D. itself, so there's no tutorial ground
+  truth to verify it against (unlike every topology above). Every
+  **column** along the array is a front/rear pair — End-Fire (both
+  normal polarity, rear = 0 ms reference, front = + row delay) or
+  Gradient (front = 0 ms/normal, rear = + row delay/reversed, same as
+  Gradient / Cardioid Pairs) — and the columns themselves are
+  arc-steered exactly like **Arc / Broadside Steering**: the same
+  symmetric, Steer-able delay pattern across columns, just applied
+  underneath each column's own front/rear offset instead of directly to
+  single elements. Kept strictly **1:1** front:back per column — no
+  independent front/back element-count ratio — since without a polar/SPL
+  engine there's no way to verify one against, only textbook theory
+  (`end_fire_arc_hybrid` / `gradient_arc_hybrid`, and the shared
+  `_arc_column_delays_s` core factored out of `arc_steering`, in
+  `array_math.py`). **Spacing** is column-to-column (lateral, same role
+  as Arc's own Spacing); a separate **Row spacing** field (with its own
+  slider, quantized the same 1 mm way) is the front-to-back depth within
+  each column, and always shows its own **¼λ** readout next to it —
+  Row spacing is rated against ¼ wavelength regardless of the ½λ rule
+  used for the column Spacing above, since it's the same End-Fire/
+  Gradient-style pair depth as those topologies' own Spacing. Verified only against internal
+  consistency: at Row spacing → column delays exactly match plain
+  `arc_steering`'s output plus a fixed per-row offset, and a single
+  column (n=1) reduces exactly to a plain End-Fire/Gradient pair.
+  Level taper, FAR, Steer, the Shape/Ellipse ratio selector (applied to
+  the column-to-column curvature, same as Arc / Broadside Steering's
+  electronic Ellipse, on top of each column's own front/rear offset),
+  and the Venue solver's angle all work the same as Arc / Broadside
+  Steering; Sub box dimensions checks **both** axes for these two
+  (column spacing vs. box width, row spacing vs. box depth) since real
+  boxes sit close on both. **Columns** replaces "Subs"
+  as the count label (each column is 2 physical subs); max 24 columns
+  (48 subs).
+- **Progressive Arc** — same physical model as Physical Horizontal Array
+  (real arc of a given **Radius**, spanning the Arc angle; every element
+  still equidistant from the center of curvature, so Delay stays fixed
+  at 0 and **Rotation** is still the true local aim angle, unlike
+  Ellipse above) but with a non-uniform angular step between adjacent
+  elements instead of a constant one — a "J-array"-style progressive
+  spread. A **Progression** ratio (1.0–8.0, default 1.0) sets the
+  center:edge angular-step ratio: 1.0 reproduces Physical Horizontal
+  Array exactly (uniform steps, verified against its own tutorial data
+  the same way); above 1.0 the center gap(s) widen (tighter curvature
+  there) and the edge gaps narrow proportionally (flatter, longer throw
+  down the flanks), while total coverage angle — and FAR — stays
+  exactly what Arc (°) says (`progressive_arc_layout` in
+  `array_math.py`). This app's own extension, not part of S.A.D. — no
+  tutorial ground truth to verify the non-uniform case against, only
+  the ratio = 1.0 boundary case above. The Sub box dimensions collision
+  check uses the same minimum-adjacent-gap measurement as Ellipse,
+  since the chord isn't constant here either.
+- **Focus Point** ("Destruction Mode") — n elements in a straight line
+  (same physical layout as Arc / Broadside Steering — evenly spaced,
+  centered on **Spacing**), all delayed so their output arrives at one
+  target point (**Focus X** — how far out in front of the line the
+  target sits, **Focus Y** — its lateral offset from the line's own
+  center, 0 = dead ahead) at the same instant, for maximum constructive
+  buildup there. `delay_i = (max distance − distance_i) / c` — near-field
+  acoustic focusing, standard beamforming and exact by construction from
+  geometry alone (not an approximation, so nothing here needed
+  verification against a tutorial the way the other topologies did).
+  This app's own extension, not a S.A.D. topology; no Level taper (its
+  point is precise phase alignment to the target, not amplitude
+  shading — same as End-Fire/Gradient, Gain Trim is a flat manual value
+  unless Group level is used).
 - **Manual** — place each sub freely by typing its own **X** (depth,
   front-to-back — larger/less-negative is closer to the audience, same
   sign convention as Physical Horizontal Array's X) and **Y** (lateral,
@@ -94,10 +209,10 @@ Per-sub gain is a manual trim (default 0 dB) on top of the computed
 delay/polarity — S.A.D. itself doesn't auto-shade levels for these
 topologies either, that's a deliberate per-show choice. For the four
 computed topologies the table's **Gain Trim (dB)** column is read-only:
-set it via the Level taper panel (Arc / Broadside Steering and Physical
-Horizontal Array only) or trim the whole array at once with Group
-level. Only **Manual** mode lets you type per-sub trim directly in the
-table.
+set it via the Level taper panel (Arc / Broadside Steering, Physical
+Horizontal Array, Progressive Arc, and the two Arc Hybrids only) or trim
+the whole array at once with Group level. Only **Manual** mode lets you
+type per-sub trim directly in the table.
 
 Opens on **Arc / Broadside Steering** by default, with **6** subs and
 **1.4 m** Spacing. The
@@ -106,14 +221,17 @@ whenever the topology changes — it's still freely resizable by hand
 otherwise.
 
 Max sub count depends on topology: **End-Fire** up to 12, **Gradient /
-Cardioid Pairs** up to 6 pairs (12 subs), **Physical Horizontal Array**,
-**Arc / Broadside Steering** and **Manual** up to 48 — those three place
-elements freely rather than stacking them front-to-back, so a much
-larger count is still a realistic array (e.g. a long curved festival sub
-arc), unlike a 48-deep End-Fire stack or 24-pair Gradient line. The
-per-sub table scrolls (mouse wheel, or drag the scrollbar) rather than
-growing the window to fit every row — it grows with the row count up to
-about a dozen visible rows, then scrolls beyond that.
+Cardioid Pairs** up to 6 pairs (12 subs), **Physical Horizontal Array**
+(either Shape), **Arc / Broadside Steering**, **Progressive Arc**,
+**Focus Point**, and **Manual** up to 48, **End-Fire Arc Hybrid** and
+**Gradient Arc Hybrid** up to 24 columns (48 subs) — those place
+elements freely (or, for the two hybrids, freely by column) rather than
+stacking them all front-to-back, so a much larger count is still a
+realistic array (e.g. a long curved festival sub arc), unlike a 48-deep
+End-Fire stack or 24-pair Gradient line. The per-sub table scrolls (mouse
+wheel, or drag the scrollbar) rather than growing the window to fit every
+row — it grows with the row count up to about a dozen visible rows, then
+scrolls beyond that.
 
 Two-column layout: the **left column** (Array, Level taper, Sub
 bandwidth, Info, the per-sub table, then OSC output) holds the panels
@@ -202,24 +320,38 @@ together) or set **Width** / **Depth** directly with the up/down-arrow
 number boxes — editing either drops Profile back to "custom". Which
 dimension is checked depends on the active topology:
 
-- **Arc / Broadside Steering** / **Physical Horizontal Array** — boxes
-  sit side by side, so **width** is checked. For Physical Horizontal
-  Array there's no Spacing field to compare against (spacing is a
-  consequence of Radius/Arc/count), so this checks the derived chord
-  distance between physically adjacent elements instead
-  (`physical_arc_chord_spacing` in `array_math.py`).
+- **Arc / Broadside Steering** / **Focus Point** — boxes sit side by
+  side, so **width** is checked against **Spacing** directly.
+- **Physical Horizontal Array (Circle)** — **width**, checked against
+  the derived constant chord distance between physically adjacent
+  elements (`physical_arc_chord_spacing` in `array_math.py`), since
+  there's no Spacing field (spacing is a consequence of Radius/Arc/
+  count).
+- **Physical Horizontal Array (Ellipse)** / **Progressive Arc** —
+  **width**, but against the *minimum* adjacent-element gap measured
+  directly from the actual placed layout (`min_adjacent_chord`), since
+  neither shape has a constant chord along the array the way the plain
+  circle does.
 - **End-Fire** / **Gradient / Cardioid Pairs** — boxes stack front to
   back, so **depth** is checked instead.
+- **End-Fire Arc Hybrid** / **Gradient Arc Hybrid** — both axes at once,
+  independently: **width** against **Spacing** (column-to-column, boxes
+  side by side) and **depth** against **Row spacing** (front/rear pair,
+  boxes front to back). Shown as two clearances side by side instead of
+  one, since either axis can collide independently of the other.
 - **Manual** — no single spacing applies; shows "n/a", and the two
-  buttons below are no-ops (also no-ops for Physical Horizontal Array,
-  which has no Spacing field to set).
+  buttons below are no-ops (also no-ops for Physical Horizontal Array
+  and Progressive Arc, neither of which has a Spacing field to set).
 
-Reports either `OK — X.XX m clearance` or `⚠ collision: ... > ...`
+Reports either `OK — X.XX m clearance` or `⚠ ... > ...`
 when the box is larger than the spacing (`spacing_clearance_m` in
 `array_math.py` — negative means overlap). This is a straight-line
 physical check only, not a full 3D footprint/rigging model.
 
-Two buttons apply the relevant dimension straight to Spacing:
+Two buttons apply the relevant dimension straight to Spacing (for the
+two Arc Hybrids, this only ever sets Spacing — the column axis — never
+Row spacing, which stays a manual field; no-ops for Physical Horizontal
+Array/Progressive Arc, same reasoning as above):
 
 - **Set min spacing** — Spacing = box dimension exactly (boxes
   touching, zero gap).
@@ -397,29 +529,40 @@ FOH than the mains — there's no positive sub delay that fixes that, the
 mains need delaying instead — so "Set group delay" clamps to 0 in that
 case rather than applying a negative number.
 
-## Level taper (Arc / Physical Array only)
+## Level taper (Arc / Physical / Progressive / Arc Hybrids only)
 
-Only shown when **Arc / Broadside Steering** or **Physical Horizontal
-Array** is active — the two topologies that are genuinely spatial line
-arrays, so the only places sidelobe-control windowing applies. Pick a
-**Window** — 9 options: Uniform, Hann, Hamming, Blackman, Bartlett
-(triangular), Welch, Blackman-Harris, Nuttall, Flat Top — and a **Max
-atten (dB)** (default 0 dB, i.e. no taper until you raise it). Every
-sub's Gain trim then live-follows the taper as you adjust Window, Max
-atten, Subs, Spacing, Arc angle, or Steer — 0 dB at the window's peak,
-fading to `-max atten` at its minimum, shaped by the window
-(`level_taper_db` / `window_weights` in `array_math.py`). There's no
-"Apply" step; it's always in sync, the same way Delay already is for
-these topologies. Uniform (or 0 dB) leaves every trim flat.
+Only shown when **Arc / Broadside Steering**, **Physical Horizontal
+Array**, **Progressive Arc**, **End-Fire Arc Hybrid**, or **Gradient Arc
+Hybrid** is active —
+the topologies that are genuinely spatial line arrays, so the only
+places sidelobe-control windowing applies (**Focus Point** is also
+spatial, but its point is precise phase alignment to a target, not
+amplitude shading, so it's deliberately excluded — same as End-Fire/
+Gradient). Pick a **Window** — 9
+options: Uniform, Hann, Hamming, Blackman, Bartlett (triangular), Welch,
+Blackman-Harris, Nuttall, Flat Top — and a **Max atten (dB)** (default
+0 dB, i.e. no taper until you raise it). Every sub's Gain trim then
+live-follows the taper as you adjust Window, Max atten, Subs/Columns,
+Spacing, Arc angle, or Steer — 0 dB at the window's peak, fading to
+`-max atten` at its minimum, shaped by the window (`level_taper_db` /
+`window_weights` in `array_math.py`). There's no "Apply" step; it's
+always in sync, the same way Delay already is for these topologies.
+Uniform (or 0 dB) leaves every trim flat.
 
-For **Arc / Broadside Steering**, the taper's peak follows the **Steer**
-angle instead of always sitting at the array's physical centre
-(`arc_steered_aim_index` in `array_math.py`) — steering the arc off-axis
-shifts the least-attenuated element(s) toward the steered side and the
-deepest attenuation toward the far edge, the same direction the delay
-pattern's own zero point moves. At Steer = 0° it's exactly the old
-symmetric window. For **Physical Horizontal Array**, which has no
-Steer control, the taper always stays centred.
+For the two Arc Hybrids, the window is computed across **columns**, not
+individual subs — both the front and rear sub in a column get that
+column's trim, since the taper is shaping the horizontal (arc) pattern,
+not the front/rear pair inside it.
+
+For **Arc / Broadside Steering** and the two Arc Hybrids, the taper's
+peak follows the **Steer** angle instead of always sitting at the
+array's physical centre (`arc_steered_aim_index` in `array_math.py`) —
+steering the arc off-axis shifts the least-attenuated element(s) toward
+the steered side and the deepest attenuation toward the far edge, the
+same direction the delay pattern's own zero point moves. At Steer = 0°
+it's exactly the old symmetric window. **Physical Horizontal Array** and
+**Progressive Arc** have no Steer control, so the taper always stays
+centred for both.
 
 Flat Top is a known exception to "monotonic taper" — it's an
 amplitude-accuracy window with a small ripple near the edges by design
@@ -439,28 +582,62 @@ trusting the taper blind.
 
 ## Venue → arc (FAR)
 
-Only shown when **Arc / Broadside Steering** or **Physical Horizontal
-Array** is active, since those are the only topologies with an Arc
-angle for FAR to describe — switch topologies via the Array panel first
-if you want to use it. "Set arc" always switches to Arc / Broadside
-Steering specifically (Physical Horizontal Array also needs a Radius,
-which the venue solver doesn't determine).
+Only shown for the angle-based topologies — **Arc / Broadside
+Steering**, **Physical Horizontal Array**, **Progressive Arc**, or
+either **Arc Hybrid** — since those are the only ones with an Arc angle
+for FAR to describe; switch topologies via the Array panel first if you
+want to use it. "Set arc" applies the solved angle to the **current**
+topology's Angle whenever it's already one of those five — it does
+**not** switch you away from whichever one you were already on (Radius,
+Row spacing, Progression, etc. are all separate fields it leaves alone).
+It only switches topology (to Arc / Broadside Steering, same as before)
+when starting from something with no Angle at all: End-Fire, Gradient,
+Focus Point, or Manual.
 
 Enter venue length (throw/depth, front-to-back) and width (coverage,
 side-to-side); the panel computes `FAR = length / width` and the arc
-angle that FAR implies (`arc = 2·asin(1/FAR)`), then "Set arc" switches
-to Arc / Broadside Steering and applies it. Matches S.A.D.'s own tutorial
-example exactly: a 50 m deep × 25 m wide venue → FAR 2.00 → arc 60°. A
-venue wider than it is deep gives FAR < 1, which has no solution (shown
-as "n/a") — no single arc covers that shape.
+angle that FAR implies (`arc = 2·asin(1/FAR)`), then "Set arc" applies
+it as above. Matches S.A.D.'s own tutorial example exactly: a 50 m deep
+× 25 m wide venue → FAR 2.00 → arc 60°.
+
+A venue wider than it is deep gives **FAR < 1**, which the plain circle
+formula has no solution for at all (shown as "arc: n/a") — no single
+circular arc covers that shape. **Shape = Ellipse is the exception**
+(on any of its four topologies: Physical Horizontal Array, Arc /
+Broadside Steering, or either Arc Hybrid): for FAR < 1, "Set arc" pins
+Angle at this app's 180° maximum instead of "n/a" (`angle_from_far_
+ellipse` in `array_math.py`), continuous with the circle's own FAR = 1
+answer, which is also exactly 180°.
+
+A second row, shown only for a Shape = Ellipse topology, handles
+**Ellipse ratio** as its own separate action: "ellipse ratio: X.XXX"
+(`ellipse_ratio_from_far` — 1.0 at FAR ≥ 1, shrinking below 1 as the
+venue gets wider than it is deep, continuous with the Angle pin above
+at FAR = 1) with its own **"Use"** button. It's deliberately independent
+of "Set arc" — one touches Angle, the other Ellipse ratio, so you can
+apply either without the other (e.g. dial in Angle by hand for a
+specific stage constraint, but still want the venue-implied ratio, or
+vice versa). This is the actual payoff of adding Ellipse: it solves
+venue shapes the circle can't, not just a cosmetic depth-scale slider.
 
 ## Sub bandwidth → optimum spacing
 
 Default **60 Hz**. Enter the top of your sub's passband; the panel computes the spacing at
 which that frequency sits at ¼ wavelength (End-Fire/Gradient) or ½
-wavelength (Arc) — S.A.D.'s own spacing rule of thumb, based on the
+wavelength (Arc, the two Arc Hybrids' column Spacing, and Focus Point) —
+S.A.D.'s own spacing rule of thumb, based on the
 highest frequency since that's where comb filtering from spacing bites
-first. "Use" applies it to the Spacing slider.
+first. "Use" applies it to the Spacing slider. Physical Horizontal Array
+and Progressive Arc have no Spacing field, so this shows "n/a" for both,
+same as before.
+
+For the two Arc Hybrids, a second row — **optimum row spacing (¼λ)** —
+computes the same rule for **Row spacing** instead, always at ¼
+wavelength (the End-Fire/Gradient rule, since Row spacing is that same
+front/rear pair depth) off the same High (Hz) field above, regardless of
+the ½λ rule the column Spacing row above uses for these two topologies.
+Its own "Use" applies it to Row spacing. Only shown when an Arc Hybrid
+topology is active.
 
 ## Info
 
