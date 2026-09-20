@@ -135,9 +135,14 @@ def gradient_pair_delay_ms(transit_ms: float, alpha: float = 0.5) -> float:
     exactly (delay = transit_ms, null at 180 deg); alpha = 0 gives a
     delay-free figure-8/dipole pair (null at 90 deg); alpha approaching 1
     approaches omni and needs impractically large delay for a fixed small
-    spacing, so the UI keeps alpha below 1. Named presets (hypercardioid
-    0.25, supercardioid 0.37, subcardioid 0.75) are standard first-order
-    differential-microphone-array values -- see README.md."""
+    spacing, so the UI keeps alpha below 1. Named UI presets (hypercardioid
+    0.25, supercardioid 0.37, cardioid 0.5) are standard first-order
+    differential-microphone-array values -- see README.md. Subcardioid
+    (0.75) is a valid alpha but deliberately not a preset: unlike every
+    other named value, it has no true null anywhere, so at real sub
+    spacing across a real passband its pattern can fully invert rather
+    than just lose depth -- see GRADIENT_PATTERN_ALPHA's comment in
+    sad_realtime_osc.py."""
     if alpha >= 1.0:
         raise ValueError("alpha must be < 1.0 (1.0 is the unreachable omni limit)")
     return transit_ms * alpha / (1.0 - alpha)

@@ -24,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.8.0"
+__version__ = "0.8.2"
 
 import os
 import tkinter as tk
@@ -105,15 +105,24 @@ XY_CONVENTIONS = [XY_DNB, XY_LACOUSTICS]
 
 # Named first-order differential-array patterns -> alpha (array_math's
 # gradient_pair_delay_ms), standard values from the differential-microphone-
-# array literature (hypercardioid/supercardioid/cardioid are the commonly
-# published exact figures; subcardioid is the conventional cardioid/omni
-# midpoint, less rigidly standardized than the other three).
+# array literature. No Subcardioid preset (alpha = 0.75, the conventional
+# cardioid/omni midpoint) -- unlike every preset here, it has no true null
+# anywhere (see gradient_null_angle_deg), so nothing structurally anchors
+# its pattern as the spacing-to-wavelength ratio grows. At this app's own
+# default spacing (1.4 m -- itself this app's own quarter-wavelength-
+# optimum recommendation for a 60 Hz passband top), the "front" and "rear"
+# fully invert (rear ~24 dB *louder* than front) right around 50-60 Hz,
+# not at some edge case far from normal use. The other four presets all
+# degrade gracefully with frequency instead of flipping, because their
+# null is exact at every frequency by construction, not just a shallow
+# dip that depends on how front/rear happen to line up. Alpha itself is
+# still uncapped below 1.0 in gradient_pair_delay_ms -- this only removes
+# the one-click preset, not the ability to type a custom alpha above 0.5.
 GRADIENT_PATTERN_ALPHA = {
     "Figure-8": 0.0,
     "Hypercardioid": 0.25,
     "Supercardioid": 0.37,
     "Cardioid": 0.5,
-    "Subcardioid": 0.75,
 }
 GRADIENT_PATTERNS = list(GRADIENT_PATTERN_ALPHA)
 
@@ -534,10 +543,14 @@ class App(tk.Tk):
                  "the fixed cardioid null (α = 0.5, straight behind the pair) to the standard "
                  "first-order pattern family E(θ) = α + (1-α)·cosθ: rear delay = transit time × "
                  "α/(1-α), still reversed polarity. Named presets are the standard values "
-                 "(Figure-8 0, Hypercardioid 0.25, Supercardioid 0.37, Cardioid 0.5, Subcardioid "
-                 "0.75); editing α directly resets Pattern to \"— custom —\", same as Sub box "
-                 "dimensions' Profile field. Capped below 1.0 -- that's the unreachable omni "
-                 "limit, needing impractically large delay for a fixed small spacing.")
+                 "(Figure-8 0, Hypercardioid 0.25, Supercardioid 0.37, Cardioid 0.5); editing α "
+                 "directly resets Pattern to \"— custom —\", same as Sub box dimensions' Profile "
+                 "field. Capped below 1.0 -- that's the unreachable omni limit, needing "
+                 "impractically large delay for a fixed small spacing. No Subcardioid preset "
+                 "(α = 0.75) -- unlike these four, it has no true null anywhere, so at real sub "
+                 "spacing across a real passband its shallow, unanchored pattern can fully invert "
+                 "(front and rear swap) rather than just losing depth gracefully; still reachable "
+                 "by typing α > 0.5 by hand if you understand that trade-off.")
 
         self.null_angle = tk.DoubleVar(value=180.0)
         self.null_angle_label, self.null_angle_spin, self.null_angle_slider = self._labeled_slider(
@@ -558,10 +571,10 @@ class App(tk.Tk):
                  "Steer (which shifts the array's own aim asymmetrically) to bias a broad rejection "
                  "zone toward one specific side of a noise-sensitive site, a far more robust tool "
                  "for that than Avoid Point's single fragile point-null. No angle here below 90° "
-                 "or above a Subcardioid-and-wider α (> 0.5) -- both have no true null to dial; "
-                 "the field simply won't move past its own valid range, and picking Subcardioid "
-                 "from Pattern leaves this showing its last valid value rather than a meaningless "
-                 "one.")
+                 "or above α = 0.5 (Subcardioid and wider) -- neither has a true null to dial; "
+                 "the field simply won't move past its own valid range, and typing a custom "
+                 "α > 0.5 by hand leaves this showing its last valid value rather than a "
+                 "meaningless one.")
 
         frm.grid_columnconfigure(2, weight=1)
 
@@ -2270,15 +2283,35 @@ class App(tk.Tk):
         # X = depth, Y = lateral; L-Acoustics: swapped).
         depth_labels = self.x_labels if self._dnb_mode() else self.y_labels
         lateral_labels = self.y_labels if self._dnb_mode() else self.x_labels
+        # End-Fire and Gradient/Cardioid Pairs are front-to-back stacks --
+        # every element shares one lateral position and spreads only in
+        # depth (README: End-Fire's Y is "distance from Sub 1 along the
+        # array", Gradient's is "front/rear depth offset within a pair" --
+        # both explicitly depth, matching Sub box dimensions' own "boxes
+        # stack front to back, so depth is checked" for these two) -- the
+        # opposite of every other computed topology here (Arc, Physical,
+        # Progressive, the Arc Hybrids, Focus/Avoid Point), which are
+        # side-by-side lines spread only in lateral, physical depth 0.
+        # _compute_positions() returns whichever axis that topology
+        # actually spreads along, so route it to the matching column
+        # instead of assuming it's always lateral.
+        is_depth_stacked = self.topology.get() in (TOPO_END_FIRE, TOPO_GRADIENT)
         if not is_manual:
             positions = self._compute_positions()
-            for i, lateral in enumerate(positions):
-                if i < len(lateral_labels):
-                    lateral_labels[i].config(text=f"{lateral:.2f}")
+            if is_depth_stacked:
+                for i, pos in enumerate(positions):
+                    if i < len(depth_labels):
+                        depth_labels[i].config(text=f"{pos:.2f}")
+                    if i < len(lateral_labels):
+                        lateral_labels[i].config(text="0.00")
+            else:
+                for i, pos in enumerate(positions):
+                    if i < len(lateral_labels):
+                        lateral_labels[i].config(text=f"{pos:.2f}")
 
         layout = self._compute_physical_layout()
         for i, (depth, _lateral, rotation) in enumerate(layout):
-            if not is_manual and i < len(depth_labels):
+            if not is_manual and not is_depth_stacked and i < len(depth_labels):
                 depth_labels[i].config(text=f"{depth:.2f}")
             if i < len(self.rotation_labels):
                 self.rotation_labels[i].config(text=f"{rotation:.1f}")

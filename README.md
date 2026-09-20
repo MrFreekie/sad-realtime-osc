@@ -69,19 +69,33 @@ python sad_realtime_osc.py
   original fixed behaviour exactly — broadband null straight behind each
   pair. Other named presets: **Figure-8** (α = 0, null at 90°, no extra
   delay beyond the pair's own spacing), **Hypercardioid** (α = 0.25, null
-  at ≈109.5°), **Supercardioid** (α = 0.37, null at ≈126.0°),
-  **Subcardioid** (α = 0.75, no true null, softer rear rejection) — the
-  standard values from the differential-microphone-array literature
-  (Subcardioid's 0.75 is the conventional cardioid/omni midpoint, less
-  rigidly standardized than the other three). Picking a preset fills α;
-  editing α directly resets Pattern to "— custom —", same convention as
-  Sub box dimensions' Profile field. α is capped below 1.0 — that's the
-  unreachable omni limit, needing impractically large delay for a fixed
-  small spacing. The broadband-null claim for every α is verified by
-  direct far-field superposition (not just the small-kd approximation
-  the α formula is usually derived from): the null angle
-  `acos(α/(α−1))` this app's delay construction produces matches the
-  literature's target-pattern null angle exactly, at every α tested.
+  at ≈109.5°), **Supercardioid** (α = 0.37, null at ≈126.0°) — the
+  standard values from the differential-microphone-array literature.
+  Picking a preset fills α; editing α directly resets Pattern to
+  "— custom —", same convention as Sub box dimensions' Profile field.
+  α is capped below 1.0 — that's the unreachable omni limit, needing
+  impractically large delay for a fixed small spacing. The broadband-null
+  claim for every α is verified by direct far-field superposition (not
+  just the small-kd approximation the α formula is usually derived
+  from): the null angle `acos(α/(α−1))` this app's delay construction
+  produces matches the literature's target-pattern null angle exactly,
+  at every α tested.
+
+  **No Subcardioid preset (α = 0.75).** Unlike the four presets above, it
+  has no true null anywhere — just a shallow dip that in the idealized
+  small-spacing limit sits about 6 dB down directly behind the pair. That
+  figure only holds when the pair's spacing is small relative to the
+  wavelength; at this app's own default spacing (1.4 m — itself the
+  quarter-wavelength-optimum recommendation for a 60 Hz passband top) the
+  real, verified behaviour is far worse: front and rear fully **invert**
+  (rear running ~24 dB *louder* than front) right around 50–60 Hz, not
+  some edge case far from normal use. The other four presets all degrade
+  gracefully with frequency instead — never inverting — because each has
+  a genuine structural null holding the pattern in shape at every
+  frequency; Subcardioid's shallow, unanchored dip has nothing holding it
+  in place as spacing grows relative to wavelength. Still reachable by
+  typing α > 0.5 into Pattern α by hand if you understand that trade-off
+  — this only removes the one-click preset, not the underlying math.
 
   A **Null angle (°)** control (90–180°) dials the same null directly by
   bearing instead of via α — pick where the pair's rejection sits (90° =

@@ -3,6 +3,42 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.8.2] - 2026-09-20
+Fixed: **End-Fire** and **Gradient / Cardioid Pairs** showed their
+computed spread position in the wrong per-sub table column under the X/Y
+convention feature. Both are front-to-back stacks -- every element
+shares one lateral position and spreads only in depth (the README
+already said as much: End-Fire's Y is "distance from Sub 1 along the
+array", Gradient's is "front/rear depth offset within a pair", and Sub
+box dimensions already checks *depth* for both) -- the opposite of every
+other computed topology here (Arc, Physical, Progressive, the Arc
+Hybrids, Focus/Avoid Point), which are side-by-side lines spread only in
+lateral. `_update_table` treated `_compute_positions()`'s result as
+always lateral regardless of topology, so in L-Acoustics Mode (Y =
+depth) these two showed their depth progression in X instead of Y.
+Now routes it to the matching column per topology
+(`is_depth_stacked` in `_update_table`, `sad_realtime_osc.py`); verified
+against both X/Y conventions and cross-checked that Arc/Physical/Focus/
+Avoid/the Arc Hybrids (already correct) didn't regress.
+
+## [0.8.1] - 2026-09-20
+Removed the **Subcardioid** preset (α = 0.75) from Pattern. Unlike the
+remaining four presets, it has no true null anywhere -- just a shallow
+dip that only reaches its textbook ~6 dB figure in the idealized
+small-spacing limit. At this app's own default spacing (1.4 m, itself
+the ¼λ-optimum recommendation for a 60 Hz passband top), verified
+front/rear behaviour is far worse: the pattern fully **inverts** (rear
+~24 dB *louder* than front) right around 50-60 Hz -- not an edge case,
+the app's own suggested operating point. The other four presets all
+degrade gracefully instead of inverting, because each has a genuine
+structural null anchoring the pattern at every frequency; Subcardioid's
+shallow, unanchored dip has nothing holding it in place as spacing grows
+relative to wavelength. Cardioid (α = 0.5) was already this control's
+default and stays the default. Still reachable by typing α > 0.5 into
+Pattern α by hand -- this removes the one-click preset only, not the
+underlying math (`gradient_pair_delay_ms` in `array_math.py` is
+unrestricted below α = 1.0, same as before).
+
 ## [0.8.0] - 2026-09-20
 **Null angle (°)** control for Gradient / Cardioid Pairs and Gradient Arc
 Hybrid -- a robust, broadband alternative to Avoid Point for a
