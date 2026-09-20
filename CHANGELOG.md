@@ -3,6 +3,82 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.5.0] - 2026-09-20
+Three additions from a beamforming-technology survey against microphone
+arrays, steerable loudspeaker columns, and RF phased-array antennas — same
+underlying array math, different fields, each already publishing exactly
+the piece this app was missing:
+
+- **Chebyshev / Taylor level taper windows**: two more options on the
+  existing 9-window **Window** dropdown, the standard antenna-array
+  tapers designed to give a *chosen, equal sidelobe level* rather than an
+  arbitrary edge attenuation (Dolph 1946 / Taylor 1955) — exactly the gap
+  `window_weights`' own docstring used to name ("no Chebyshev/Kaiser/
+  Tukey, which need an extra design parameter"). Replace **Max atten
+  (dB)** with a new **Sidelobe (dB)** field (default 30, range 10-100)
+  when selected; gain trim becomes a literal `20*log10` of the window's
+  own weights instead of the other 9 windows' linear remap, so the edge
+  elements land at (Chebyshev: exactly; Taylor: approximately) that many
+  dB down. Pure-Python ports of `scipy.signal.windows.chebwin`/`.taylor`
+  (`_chebyshev_weights`/`_taylor_weights` in `array_math.py`, no new
+  dependency — matches this app's existing hand-rolled window set) using
+  a manual DFT (`_dft_real`, element counts here are small enough that
+  O(n²) is free); verified by reconstructing the array factor and
+  confirming every sidelobe lands at exactly the requested dB (n=16,
+  30 dB -> every sidelobe -30.00 dB across a full ±90° sweep). Both
+  follow Steer the same as the other 9 windows -- `steered_window_
+  weights` treats the plain centred n-point array as an interpolated
+  shape (`_interp_shape`) and re-centers that, since Chebyshev/Taylor
+  have no continuous formula of their own to re-sample the way the
+  other 9 windows' `_window_shape` does; re-centering trades away the
+  exact equal-ripple property away from center, same honesty trade-off
+  `arc_steered_aim_index` already makes for the other windows' own
+  steering.
+- **Steer-aware grating-lobe spacing limit**: a third readout in Sub
+  bandwidth → optimum spacing, shown for Arc / Broadside Steering and
+  the two Arc Hybrids, alongside the existing flat ½λ rule of thumb:
+  `d < λ / (1 + |sin(Steer)|)`, the phased-array-antenna criterion for
+  keeping a spurious lobe out of visible space (`grating_lobe_max_
+  spacing_m` in `array_math.py`), evaluated at the same High (Hz) and
+  the array's current Steer. Loosest (a full wavelength) at Steer = 0°,
+  tightening to exactly ½λ at ±90° -- consistent with (and a rigorous,
+  steer-dependent generalization of) the existing rule, which never
+  accounted for Steer at all. `OK — ... (... headroom)` / `⚠
+  grating-lobe risk: ...`, same phrasing convention as the Sub box
+  dimensions collision check. Deliberately scoped to Steer alone, not a
+  full grating-lobe model -- doesn't account for a wide Arc angle's own
+  additional local curvature.
+- **Tunable Gradient/Cardioid pattern**: Gradient / Cardioid Pairs and
+  Gradient Arc Hybrid's front/rear pair is no longer a fixed cardioid --
+  a new **Pattern** dropdown (Figure-8/Hypercardioid/Supercardioid/
+  Cardioid/Subcardioid/"— custom —") plus **Pattern α** slider (0-0.9)
+  set the rear element's delay via `transit_ms * α/(1-α)`
+  (`gradient_pair_delay_ms` in `array_math.py`), the standard first-order
+  differential-array pattern family `E(θ) = α + (1-α)·cos θ`. α = 0.5
+  (Cardioid, the default) reproduces the original fixed behaviour
+  exactly. Named presets use the standard literature values (0, 0.25,
+  0.37, 0.5, 0.75); picking one fills α, editing α resets Pattern to
+  custom, same convention as Sub box dimensions' Profile field. Verified
+  by direct far-field superposition (not just the small-kd approximation
+  the α formula is usually derived from): the null angle this app's
+  delay construction produces, `acos(α/(α-1))`, matches the target
+  pattern's own null-angle formula exactly at every α tested (e.g.
+  hypercardioid α=0.25 -> 109.47°, supercardioid α=0.37 -> 125.97°, both
+  exact to the derivation, not just close).
+- **Taper cost readout**: a live `taper cost: X.XX dB on-axis, Y.YY dB
+  total power (vs. uniform)` line under the Level taper panel, for every
+  window (not just Chebyshev/Taylor) -- sidelobe control has a real SPL
+  price a prediction plot doesn't show as a line item. On-axis loss
+  follows the mean of the *linear* gains (`taper_onaxis_loss_db` in
+  `array_math.py`), since a correctly steered array sums in phase on
+  axis; total power follows the mean of the *squared* gains
+  (`taper_power_loss_db`), always the smaller (less negative) of the two
+  since on-axis coherent summation is hurt by tapering more than raw
+  radiated power is.
+
+New `.sadrt` fields: `array.gradient_pattern`, `array.gradient_alpha`,
+`level_taper.sidelobe_db`.
+
 ## [0.4.2] - 2026-09-20
 Fixed: the Array panel's FAR readout only refreshed when Angle changed on Arc
 / Broadside Steering specifically -- stale (or stuck at the initial "FAR: -")

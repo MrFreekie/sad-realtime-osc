@@ -72,14 +72,18 @@ def build_project_dict(app) -> dict:
             "progression_ratio": app.progression_ratio.get(),
             "focus_x_m": app.focus_x.get(),
             "focus_y_m": app.focus_y.get(),
+            "gradient_pattern": app.gradient_pattern.get(),
+            "gradient_alpha": app.gradient_alpha.get(),
         },
         "level_taper": {
             "window": app.taper_window.get(),
             "max_atten_db": app.taper_max_atten.get(),
+            "sidelobe_db": app.taper_sidelobe_db.get(),
         },
         "units": {
             "length_unit": app.unit.get(),
             "delay_display": app.delay_unit.get(),
+            "xy_convention": app.xy_convention.get(),
         },
         "dsp": {
             "sample_rate_hz": app._dsp_sample_rate(),
@@ -159,9 +163,11 @@ def default_project_dict() -> dict:
             "progression_ratio": 1.0,
             "focus_x_m": 10.0,
             "focus_y_m": 0.0,
+            "gradient_pattern": "Cardioid",
+            "gradient_alpha": 0.5,
         },
-        "level_taper": {"window": "Uniform", "max_atten_db": 0.0},
-        "units": {"length_unit": "m", "delay_display": "ms"},
+        "level_taper": {"window": "Uniform", "max_atten_db": 0.0, "sidelobe_db": 30.0},
+        "units": {"length_unit": "m", "delay_display": "ms", "xy_convention": "L-Acoustics Mode"},
         "dsp": {"sample_rate_hz": 96000},
         "environment": {"temp_c": 20.0, "humidity_pct": 50.0, "altitude_m": 0.0},
         "group": {
@@ -243,12 +249,17 @@ def apply_project_dict(app, data: dict) -> list[str]:
         (app.progression_ratio, "progression_ratio", 1.0, 8.0),
         (app.focus_x, "focus_x_m", -100000.0, 100000.0),
         (app.focus_y, "focus_y_m", -100000.0, 100000.0),
+        (app.gradient_alpha, "gradient_alpha", 0.0, 0.9),
     ):
         if key in array:
             value, clamped = _clamp(array[key], lo, hi, var.get())
             var.set(value)
             if clamped:
                 warnings.append(f"'{key}' out of range -- clamped to {value}.")
+
+    from sad_realtime_osc import GRADIENT_PATTERNS, CUSTOM_PROFILE
+    pattern = array.get("gradient_pattern", app.gradient_pattern.get())
+    app.gradient_pattern.set(pattern if pattern in GRADIENT_PATTERNS else CUSTOM_PROFILE)
 
     shape = array.get("shape", "circle")
     if shape not in ("circle", "ellipse"):
@@ -265,17 +276,29 @@ def apply_project_dict(app, data: dict) -> list[str]:
             f"Sub count clamped to {app.count.get()} (max for this topology).")
 
     taper = section("level_taper")
-    from array_math import LEVEL_TAPER_WINDOWS
+    from array_math import LEVEL_TAPER_WINDOWS, PARAMETRIC_TAPER_WINDOWS
     window = taper.get("window", app.taper_window.get())
     if window not in LEVEL_TAPER_WINDOWS:
         warnings.append(f"Unknown level taper window '{window}' -- kept current window.")
         window = app.taper_window.get()
     app.taper_window.set(window)
+    # Keep the Max atten / Sidelobe fields' visibility in sync with the
+    # loaded window -- app._on_taper_window_change() would also re-run
+    # _on_change() prematurely (other sections below haven't loaded yet),
+    # so just replicate its visibility toggle directly.
+    is_parametric = window in PARAMETRIC_TAPER_WINDOWS
+    app._set_widgets_visible((app.sidelobe_label, app.sidelobe_spin), is_parametric)
+    app._set_widgets_visible((app.atten_label, app.atten_spin), not is_parametric)
     if "max_atten_db" in taper:
         value, clamped = _clamp(taper["max_atten_db"], 0.0, 30.0, app.taper_max_atten.get())
         app.taper_max_atten.set(value)
         if clamped:
             warnings.append("Level taper max atten out of range -- clamped.")
+    if "sidelobe_db" in taper:
+        value, clamped = _clamp(taper["sidelobe_db"], 10.0, 100.0, app.taper_sidelobe_db.get())
+        app.taper_sidelobe_db.set(value)
+        if clamped:
+            warnings.append("Level taper sidelobe level out of range -- clamped.")
 
     units = section("units")
     unit = units.get("length_unit", app.unit.get())
@@ -288,6 +311,11 @@ def apply_project_dict(app, data: dict) -> list[str]:
         warnings.append(f"Unknown delay display '{delay_display}' -- kept current.")
         delay_display = app.delay_unit.get()
     app.delay_unit.set(delay_display)
+    xy_convention = units.get("xy_convention", app.xy_convention.get())
+    if xy_convention not in ("d&b Mode", "L-Acoustics Mode"):
+        warnings.append(f"Unknown X/Y convention '{xy_convention}' -- kept current.")
+        xy_convention = app.xy_convention.get()
+    app.xy_convention.set(xy_convention)
 
     dsp = section("dsp")
     if "sample_rate_hz" in dsp:
@@ -376,7 +404,6 @@ def apply_project_dict(app, data: dict) -> list[str]:
         except (TypeError, ValueError):
             warnings.append("Invalid cabinet gap -- kept current value.")
     profile = sub_box.get("profile", "")
-    from sad_realtime_osc import CUSTOM_PROFILE
     app.sub_profile.set(profile if profile in app.sub_profiles else CUSTOM_PROFILE)
     ac = sub_box.get("acoustic_center") if isinstance(sub_box.get("acoustic_center"), dict) else {}
     if "enabled" in ac:

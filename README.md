@@ -1,11 +1,16 @@
 # S.A.D. Realtime
 
+By [freekieaudio.uk](https://freekieaudio.uk)
+
 A small desktop app that reimplements the delay/gain/polarity math behind
 Merlijn van Veen's Subwoofer Array Designer spreadsheet for four array
 topologies, plus five of this app's own extensions (two Arc Hybrids, an
 Ellipse shape, Progressive Arc, and Focus Point), without the polar/SPL
 prediction plots — just the three per-sub values, updated live and
 streamed out over OSC.
+
+**100% vibe coded — use at your own risk, check all calculations before
+use.**
 
 ## Credits
 
@@ -54,8 +59,29 @@ python sad_realtime_osc.py
   Delay increases towards the front so the array reinforces forward and
   cancels rearward.
 - **Gradient / Cardioid Pairs** — front/rear pairs. Front: 0 ms, normal
-  polarity. Rear: delayed by the pair spacing, reversed polarity. Gives a
-  broadband null directly behind each pair.
+  polarity. Rear: delayed, reversed polarity — the delay (and with it the
+  null angle) is set by **Pattern** / **α**, not fixed to the plain
+  cardioid case: `rear delay = transit time × α/(1−α)` (`transit time` =
+  the pair's own spacing/speed of sound), the standard first-order
+  differential-array pattern family `E(θ) = α + (1−α)·cos θ`
+  (`gradient_pair_delay_ms` in `array_math.py`). **α = 0.5** (the
+  **Cardioid** preset, and this control's default) reproduces the
+  original fixed behaviour exactly — broadband null straight behind each
+  pair. Other named presets: **Figure-8** (α = 0, null at 90°, no extra
+  delay beyond the pair's own spacing), **Hypercardioid** (α = 0.25, null
+  at ≈109.5°), **Supercardioid** (α = 0.37, null at ≈126.0°),
+  **Subcardioid** (α = 0.75, no true null, softer rear rejection) — the
+  standard values from the differential-microphone-array literature
+  (Subcardioid's 0.75 is the conventional cardioid/omni midpoint, less
+  rigidly standardized than the other three). Picking a preset fills α;
+  editing α directly resets Pattern to "— custom —", same convention as
+  Sub box dimensions' Profile field. α is capped below 1.0 — that's the
+  unreachable omni limit, needing impractically large delay for a fixed
+  small spacing. The broadband-null claim for every α is verified by
+  direct far-field superposition (not just the small-kd approximation
+  the α formula is usually derived from): the null angle
+  `acos(α/(α−1))` this app's delay construction produces matches the
+  literature's target-pattern null angle exactly, at every α tested.
 - **Physical Horizontal Array** — S.A.D.'s Setup 1: n elements physically
   placed *and rotated* on a real arc of a given **Radius**, spanning the
   Arc angle. Every element is already equidistant from the arc's centre
@@ -130,8 +156,9 @@ python sad_realtime_osc.py
   truth to verify it against (unlike every topology above). Every
   **column** along the array is a front/rear pair — End-Fire (both
   normal polarity, rear = 0 ms reference, front = + row delay) or
-  Gradient (front = 0 ms/normal, rear = + row delay/reversed, same as
-  Gradient / Cardioid Pairs) — and the columns themselves are
+  Gradient (front = 0 ms/normal, rear = + row delay/reversed, same
+  **Pattern** / **α** control as Gradient / Cardioid Pairs, including its
+  own row transit time) — and the columns themselves are
   arc-steered exactly like **Arc / Broadside Steering**: the same
   symmetric, Steer-able delay pattern across columns, just applied
   underneath each column's own front/rear offset instead of directly to
@@ -540,14 +567,39 @@ spatial, but its point is precise phase alignment to a target, not
 amplitude shading, so it's deliberately excluded — same as End-Fire/
 Gradient). Pick a **Window** — 9
 options: Uniform, Hann, Hamming, Blackman, Bartlett (triangular), Welch,
-Blackman-Harris, Nuttall, Flat Top — and a **Max atten (dB)** (default
-0 dB, i.e. no taper until you raise it). Every sub's Gain trim then
-live-follows the taper as you adjust Window, Max atten, Subs/Columns,
-Spacing, Arc angle, or Steer — 0 dB at the window's peak, fading to
-`-max atten` at its minimum, shaped by the window (`level_taper_db` /
-`window_weights` in `array_math.py`). There's no "Apply" step; it's
-always in sync, the same way Delay already is for these topologies.
-Uniform (or 0 dB) leaves every trim flat.
+Blackman-Harris, Nuttall, Flat Top, **Chebyshev**, **Taylor** — and,
+for the first 9, a **Max atten (dB)** (default 0 dB, i.e. no taper until
+you raise it). Every sub's Gain trim then live-follows the taper as you
+adjust Window, Max atten, Subs/Columns, Spacing, Arc angle, or Steer —
+0 dB at the window's peak, fading to `-max atten` at its minimum, shaped
+by the window (`level_taper_db` / `window_weights` in `array_math.py`).
+There's no "Apply" step; it's always in sync, the same way Delay already
+is for these topologies. Uniform (or 0 dB) leaves every trim flat.
+
+**Chebyshev** and **Taylor** replace Max atten with a **Sidelobe (dB)**
+field (default 30 dB, range 10–100) instead: these two are the standard
+antenna/phased-array tapers Dolph (Chebyshev, 1946) and Taylor (1955)
+designed specifically to *give the array a real, chosen sidelobe level*,
+not just shade the edges by an arbitrary amount, so their gain trim is a
+literal `20·log10(w/peak)` of the window's own amplitude weights
+(`_chebyshev_weights` / `_taylor_weights` in `array_math.py`, pure-Python
+ports of SciPy's `chebwin`/`taylor`, verified by reconstructing the array
+factor and confirming equal-ripple sidelobes land at exactly the
+requested dB) rather than the linear Max-atten remap the other 9 windows
+use. Chebyshev gives the narrowest possible main lobe for that sidelobe
+level, holding every sidelobe at exactly the same level out to ±90°;
+Taylor approximates that near the main lobe (over a fixed 4 near-in
+sidelobes) but tapers off further out, the SAR/radar-community's usual
+compromise pick. Both **follow Steer the same as the other 9 windows**
+— see below — even though they have no continuous formula of their own
+to re-sample off-centre: `steered_window_weights` instead linearly
+interpolates the plain centred n-point array (`_interp_shape`) and
+re-centres that, the same asymmetric-stretch trick used for every other
+window here. Off-centre this trades away the exact equal-ripple
+guarantee (re-sampling a Chebyshev-optimal array away from its own
+centre isn't optimal any more either) — the same honesty trade-off
+`arc_steered_aim_index` already makes for the other 9 windows' own
+steering, not a new one.
 
 For the two Arc Hybrids, the window is computed across **columns**, not
 individual subs — both the front and rear sub in a column get that
@@ -562,12 +614,32 @@ the steered side and the deepest attenuation toward the far edge, the
 same direction the delay pattern's own zero point moves. At Steer = 0°
 it's exactly the old symmetric window. **Physical Horizontal Array** and
 **Progressive Arc** have no Steer control, so the taper always stays
-centred for both.
+centred for both regardless of Window.
 
 Flat Top is a known exception to "monotonic taper" — it's an
 amplitude-accuracy window with a small ripple near the edges by design
 (can dip slightly past `-max atten` there), which is correct behaviour
 for that window, not a bug.
+
+A live **taper cost** readout — `taper cost: X.XX dB on-axis, Y.YY dB
+total power (vs. uniform)` — shows the real-world price of whatever
+taper is currently active, for every window, not just Chebyshev/Taylor.
+Sidelobe control in a prediction plot doesn't show up as a line-item
+cost, but it isn't free: **on-axis loss** is the forward SPL given up
+because a correctly steered array sums its elements *in phase*, so
+on-axis pressure follows the mean of the *linear* gains
+(`taper_onaxis_loss_db` in `array_math.py`) — every dB of edge
+attenuation dialled in for sidelobe control is a dB not coming back as
+forward level, from a box still costing an amplifier channel and
+rigging weight. **Total power** is the same idea for the incoherent
+power sum instead (`taper_power_loss_db`) — closer to overall
+amplifier/driver headroom spent than to what the room hears, and always
+the smaller (less negative) of the two, since on-axis coherent summation
+is hurt by tapering more than raw radiated power is. A deep sidelobe
+target on a small array can cost several dB of forward level for a
+pattern benefit this app has no way to show (no polar/SPL prediction)
+— worth cross-checking a heavy taper against a prediction tool before
+committing a show to it.
 
 The Gain Trim column is read-only for these topologies — the taper
 (plus Group level for a uniform offset) is the only way to shape it.
@@ -639,6 +711,27 @@ the ½λ rule the column Spacing row above uses for these two topologies.
 Its own "Use" applies it to Row spacing. Only shown when an Arc Hybrid
 topology is active.
 
+A third row, shown only for **Arc / Broadside Steering** and the two Arc
+Hybrids (the topologies with a **Steer** control), reports a
+**steer-aware grating-lobe spacing limit** alongside the ½λ rule of
+thumb above: `d < λ / (1 + |sin(Steer)|)`, the phased-array-antenna
+criterion for keeping a spurious lobe out of visible space
+(`grating_lobe_max_spacing_m` in `array_math.py`), evaluated at the same
+High (Hz) field and the array's current Steer angle. Unlike the ½λ rule
+— a comb-filtering guideline that's the same number regardless of Steer
+— this one tightens as Steer moves off-centre: a full wavelength at
+Steer = 0° (looser than ½λ), narrowing smoothly to exactly ½λ at the
+±90° extreme, matching RF phased-array theory's own broadside/end-fire
+bounds. Reports `OK — grating-lobe limit X.XX m at Steer Y° (Z.ZZ m
+headroom)` or `⚠ grating-lobe risk: ... > ... limit ...`, same
+OK/⚠ phrasing as the Sub box dimensions collision check. Deliberately
+scoped to Steer alone — it doesn't account for the additional local
+curvature a wide Arc angle itself adds (a curved array's own edge
+elements see a steeper local delay gradient than the centre does),
+which would need a per-element rather than one-number check; this is
+the one input (Steer) the existing ½λ/¼λ rule ignored entirely, not a
+full grating-lobe model.
+
 ## Info
 
 Mirrors the straightforward part of S.A.D.'s own "Info" panel: array
@@ -687,11 +780,11 @@ almost certainly the box's own finite stand-in for -inf. (A 0 dB entry
 reading back ~-0.1 dB is normal step-resolution quantisation and doesn't affect
 the curve.) See `gain_db_to_osc` / `osc_to_gain_db` in `array_math.py`.
 
-**This is not DirectOut's OSC namespace.** These are generic stub
-addresses — remap them here to match the actual parameter paths your
-Prodigy/ACE setup expects, per DirectOut's own remote-protocol
-documentation, or use this as the source feeding a lookup/translation
-layer in front of the box.
+**This is not any specific device's OSC namespace.** These are generic
+stub addresses — remap them here to match the actual parameter paths
+your target device expects, per its own remote-protocol documentation,
+or use this as the source feeding a lookup/translation layer in front
+of the box.
 
 ## Project (save / load)
 

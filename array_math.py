@@ -26,6 +26,7 @@ by its author), so the actual math here is this app's own derivation,
 not a reimplementation. See README.md's Credits section.
 """
 from dataclasses import dataclass
+import cmath
 import math
 
 # Cramer (1993), JASA 93(5):2510-2516, "The variation of the specific heat
@@ -114,13 +115,46 @@ def end_fire(n: int, spacing_m: float, speed_mps: float, gain_trim_db=None) -> l
     return out
 
 
-def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_db=None) -> list[SubOutput]:
-    """Front/rear cardioid pairs. Front: 0 delay, normal polarity. Rear:
-    delayed by the front-to-rear propagation time, reversed polarity.
-    Produces a broadband null directly behind each pair."""
+def gradient_pair_delay_ms(transit_ms: float, alpha: float = 0.5) -> float:
+    """Rear-element delay for a first-order differential (gradient) pair,
+    generalizing the fixed cardioid case to the standard differential-
+    microphone-array pattern family E(theta) = alpha + (1-alpha)*cos(theta)
+    (theta measured from the front/on-axis direction):
+
+        delay = transit_ms * alpha / (1 - alpha)
+
+    transit_ms is the pair's own acoustic transit time (spacing_m /
+    speed_mps, in ms) -- what gradient_cardioid used directly as its fixed
+    delay before this generalization. Reversed polarity on the rear
+    element (applied by the caller) is what turns this delay into a
+    broadband null at theta_null = acos(alpha/(alpha-1)) for any alpha in
+    [0, 1) -- verified by direct far-field superposition, not just the
+    small-kd differential approximation the alpha formula itself is
+    usually derived from (the null condition is exact at every
+    frequency). alpha = 0.5 reproduces this app's original fixed cardioid
+    exactly (delay = transit_ms, null at 180 deg); alpha = 0 gives a
+    delay-free figure-8/dipole pair (null at 90 deg); alpha approaching 1
+    approaches omni and needs impractically large delay for a fixed small
+    spacing, so the UI keeps alpha below 1. Named presets (hypercardioid
+    0.25, supercardioid 0.37, subcardioid 0.75) are standard first-order
+    differential-microphone-array values -- see README.md."""
+    if alpha >= 1.0:
+        raise ValueError("alpha must be < 1.0 (1.0 is the unreachable omni limit)")
+    return transit_ms * alpha / (1.0 - alpha)
+
+
+def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_db=None,
+                       alpha: float = 0.5) -> list[SubOutput]:
+    """Front/rear differential pairs. Front: 0 delay, normal polarity.
+    Rear: delayed per gradient_pair_delay_ms(transit_ms, alpha), reversed
+    polarity. alpha = 0.5 (default) is the original fixed cardioid,
+    producing a broadband null directly behind each pair; other alpha
+    values generalize the pattern to figure-8/hyper/supercardioid/
+    subcardioid -- see gradient_pair_delay_ms."""
     n = pairs * 2
     trims = gain_trim_db or [0.0] * n
-    delay_ms = (spacing_m / speed_mps) * 1000.0
+    transit_ms = (spacing_m / speed_mps) * 1000.0
+    delay_ms = gradient_pair_delay_ms(transit_ms, alpha)
     out = []
     for p in range(pairs):
         front_idx, rear_idx = p * 2 + 1, p * 2 + 2
@@ -253,7 +287,8 @@ def end_fire_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: 
 
 def gradient_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: float,
                          angle_deg: float, speed_mps: float, gain_trim_db=None,
-                         steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[SubOutput]:
+                         steer_deg: float = 0.0, depth_scale: float = 1.0,
+                         alpha: float = 0.5) -> list[SubOutput]:
     """Arc / Broadside Steering, but every column is itself a front/rear
     Gradient (cardioid) pair instead of a single element -- horizontal
     pattern control (arc steering across n_columns) combined with each
@@ -262,8 +297,9 @@ def gradient_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: 
     as end_fire_arc_hybrid.
 
     Within a column, front is the 0 ms/normal-polarity reference and rear
-    carries an extra row_spacing_m/speed_mps on top, reversed polarity --
-    same convention as gradient_cardioid's pair -- added to that column's
+    carries an extra delay on top (gradient_pair_delay_ms(row transit
+    time, alpha), reversed polarity -- same convention and same alpha
+    generalization as gradient_cardioid's pair) added to that column's
     own arc-steering delay.
 
     depth_scale is Ellipse mode's electronic depth ratio, same meaning
@@ -276,7 +312,8 @@ def gradient_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: 
     trims = gain_trim_db or [0.0] * n
     column_delays_s = _arc_column_delays_s(n_columns, column_spacing_m, angle_deg, speed_mps,
                                             steer_deg, depth_scale)
-    row_delay_ms = row_spacing_m / speed_mps * 1000.0
+    row_transit_ms = row_spacing_m / speed_mps * 1000.0
+    row_delay_ms = gradient_pair_delay_ms(row_transit_ms, alpha)
     out = []
     for c in range(n_columns):
         front_idx, rear_idx = c * 2 + 1, c * 2 + 2
@@ -519,6 +556,33 @@ def spacing_at_wavelength_fraction(freq_hz: float, speed_mps: float, fraction: f
     return fraction * speed_mps / freq_hz
 
 
+def grating_lobe_max_spacing_m(freq_hz: float, speed_mps: float, steer_deg: float = 0.0):
+    """Maximum element spacing that keeps a grating lobe out of visible
+    space, per the phased-array-antenna criterion
+
+        d < lambda / (1 + |sin(steer_deg)|)
+
+    evaluated at freq_hz (the top of the sub passband) and the array's
+    current electronic Steer angle off broadside -- the rigorous,
+    steer-dependent counterpart to the fixed 1/2 wavelength rule of thumb
+    spacing_at_wavelength_fraction already applies to Arc / Broadside
+    Steering (this app's own Steer superimposes exactly the linear
+    delay-steering ramp this criterion assumes; see _arc_column_delays_s's
+    steer_depth term). At steer_deg = 0 this gives a full wavelength --
+    looser than the 1/2 wavelength rule of thumb, which is a
+    comb-filtering guideline, not a hard grating-lobe limit -- and
+    tightens smoothly as Steer moves off-centre, down to 1/2 wavelength
+    at the +/-90 deg extreme. This only accounts for the Steer offset,
+    not the additional local curvature of a wide Arc angle itself (a
+    curved array's own edge elements have a steeper local delay gradient
+    than its center) -- deliberately scoped to Steer alone, the one
+    input the existing spacing rule ignored entirely; see README.md."""
+    if not freq_hz or freq_hz <= 0 or not speed_mps or speed_mps <= 0:
+        return None
+    wavelength = speed_mps / freq_hz
+    return wavelength / (1.0 + abs(math.sin(math.radians(steer_deg))))
+
+
 GAIN_OSC_SLOPE = 165.0
 GAIN_OSC_MAX_DB = 18.0
 GAIN_OSC_FLOOR_DB = -144.0
@@ -721,7 +785,123 @@ def array_length(n: int, spacing_m: float) -> float:
 
 
 LEVEL_TAPER_WINDOWS = ["Uniform", "Hann", "Hamming", "Blackman", "Bartlett", "Welch",
-                       "Blackman-Harris", "Nuttall", "Flat Top"]
+                       "Blackman-Harris", "Nuttall", "Flat Top", "Chebyshev", "Taylor"]
+
+PARAMETRIC_TAPER_WINDOWS = ("Chebyshev", "Taylor")
+"""Windows that need an extra sidelobe-level (dB) design parameter, unlike
+the other LEVEL_TAPER_WINDOWS -- computed as a whole discrete n-point array
+(_chebyshev_weights / _taylor_weights) rather than sampled from a
+continuous shape function of position like _window_shape's windows, and
+mapped to gain trim by a literal 20*log10(w/peak) (level_taper_db) instead
+of the linear 0..-max_atten_db remap the other windows use, since their
+whole point is that the dB parameter *is* the actual sidelobe level, not
+an arbitrary edge-attenuation target."""
+
+_TAYLOR_NBAR = 4
+"""Number of nearly-equal-level near-in sidelobes for the Taylor window --
+fixed rather than exposed as a second UI parameter (matches SciPy's and
+MATLAB's own default), so Taylor only needs the same one sidelobe-level
+(dB) control Chebyshev does."""
+
+
+def _dft_real(seq) -> list[float]:
+    """Real part of the DFT of a complex sequence (X[k] = sum_m
+    seq[m]*exp(-2j*pi*k*m/n)), by direct summation -- O(n^2), fine for
+    this app's element counts (<= 48). No numpy/scipy dependency; used
+    only by _chebyshev_weights' frequency-sampling construction."""
+    n = len(seq)
+    out = []
+    for k in range(n):
+        s = 0j
+        for m in range(n):
+            s += seq[m] * cmath.exp(-2j * math.pi * k * m / n)
+        out.append(s.real)
+    return out
+
+
+def _chebyshev_weights(n: int, sidelobe_db: float) -> list[float]:
+    """Dolph-Chebyshev window, n points, equal-ripple sidelobes
+    sidelobe_db below the main lobe -- the standard frequency-sampling
+    construction (Dolph 1946): evaluate the Chebyshev polynomial of order
+    n-1 on n frequency samples, inverse-DFT back to the element domain,
+    normalize to peak 1.0. A pure-Python port of SciPy's
+    scipy.signal.windows.chebwin (sym=True case), verified against it by
+    reconstructing the array factor and confirming every sidelobe lands
+    at exactly -sidelobe_db (e.g. n=16, 30 dB -> every sidelobe peak
+    -30.00 dB, to 2 decimal places, across a full +/-90 deg sweep).
+    Gives the narrowest possible main lobe for that sidelobe level --
+    the reason this taper exists at all; see README.md."""
+    if n <= 1:
+        return [1.0] * n
+    order = n - 1.0
+    beta = math.cosh(1.0 / order * math.acosh(10.0 ** (abs(sidelobe_db) / 20.0)))
+    p = []
+    for k in range(n):
+        x = beta * math.cos(math.pi * k / n)
+        if x > 1:
+            val = math.cosh(order * math.acosh(x))
+        elif x < -1:
+            val = (2 * (n % 2) - 1) * math.cosh(order * math.acosh(-x))
+        else:
+            val = math.cos(order * math.acos(x))
+        p.append(val)
+    if n % 2:
+        full = _dft_real(p)
+        n2 = (n + 1) // 2
+        w_head = full[:n2]
+        w = list(reversed(w_head[1:n2])) + w_head
+    else:
+        p_shifted = [p[k] * cmath.exp(1j * math.pi * k / n) for k in range(n)]
+        full = _dft_real(p_shifted)
+        n2 = n // 2 + 1
+        w_tail = full[1:n2]
+        w = list(reversed(w_tail)) + w_tail
+    peak = max(w)
+    if peak <= 0:
+        return [1.0] * n
+    return [wi / peak for wi in w]
+
+
+def _taylor_weights(n: int, sidelobe_db: float, nbar: int = _TAYLOR_NBAR) -> list[float]:
+    """Taylor window, n points: approximates Dolph-Chebyshev's constant
+    sidelobe_db-down sidelobe level for the nbar near-in sidelobes, then
+    lets the pattern taper off further out instead of holding dead level
+    all the way to +/-90 deg (Taylor 1955) -- the SAR/radar-community
+    successor to Chebyshev, standard wherever a slightly wider main lobe
+    is worth trading for less total sidelobe energy. Pure-Python port of
+    SciPy's scipy.signal.windows.taylor (sym=True, norm=True); see
+    Carrara/Goodman/Majewski, "Spotlight Synthetic Aperture Radar", App.
+    D.2 for the reference algorithm."""
+    if n <= 1:
+        return [1.0] * n
+    b = 10.0 ** (sidelobe_db / 20.0)
+    a = math.acosh(b) / math.pi
+    s2 = nbar ** 2 / (a ** 2 + (nbar - 0.5) ** 2)
+    ma = list(range(1, nbar))
+    m2 = [m * m for m in ma]
+    signs = [1.0 if i % 2 == 0 else -1.0 for i in range(len(ma))]
+    f_m = []
+    for mi in range(len(ma)):
+        numer = signs[mi]
+        for mj in range(len(ma)):
+            numer *= (1.0 - m2[mi] / s2 / (a ** 2 + (ma[mj] - 0.5) ** 2))
+        denom = 1.0
+        for mj in range(len(ma)):
+            if mj != mi:
+                denom *= (1.0 - m2[mi] / m2[mj])
+        f_m.append(numer / (2.0 * denom))
+
+    def w_of(x):
+        total = 1.0
+        for mi, m in enumerate(ma):
+            total += 2.0 * f_m[mi] * math.cos(2.0 * math.pi * m * (x - n / 2.0 + 0.5) / n)
+        return total
+
+    w = [w_of(float(k)) for k in range(n)]
+    center = w_of((n - 1) / 2.0)
+    if center == 0:
+        return w
+    return [wi / center for wi in w]
 
 
 def _window_shape(u: float, window: str) -> float:
@@ -757,19 +937,53 @@ def _window_shape(u: float, window: str) -> float:
     raise ValueError(f"unknown window: {window!r}")
 
 
-def window_weights(n: int, window: str) -> list[float]:
-    """Classic DSP window shape across n elements, normalized 0-1 with 1
-    at the center element(s) and (for every window but Uniform) 0 at the
-    two edge elements. Standard array-theory sidelobe-control windows --
-    same idea as S.A.D.'s "level tapering", just a smaller, unparameterized
-    set (no Chebyshev/Kaiser/Tukey, which need an extra design parameter)."""
+def window_weights(n: int, window: str, sidelobe_db: float = 30.0) -> list[float]:
+    """Window shape across n elements, normalized 0-1 with 1 at the
+    center element(s) -- for the 9 classic DSP windows (0 at the two
+    edge elements, every one but Uniform), sampled from _window_shape's
+    continuous formula; for Chebyshev/Taylor (PARAMETRIC_TAPER_WINDOWS),
+    computed as a whole discrete n-point array by _chebyshev_weights /
+    _taylor_weights instead, using sidelobe_db as their one extra design
+    parameter (ignored for every other window). Standard array-theory
+    sidelobe-control windows -- same idea as S.A.D.'s "level tapering",
+    generalized beyond its original unparameterized set."""
+    if window in PARAMETRIC_TAPER_WINDOWS:
+        if window == "Chebyshev":
+            return _chebyshev_weights(n, sidelobe_db)
+        return _taylor_weights(n, sidelobe_db)
     if n <= 1:
         return [1.0] * n
     denom = n - 1
     return [_window_shape(2.0 * k / denom - 1.0, window) for k in range(n)]
 
 
-def steered_window_weights(n: int, window: str, center_index: float) -> list[float]:
+def _interp_shape(weights: list[float], u: float) -> float:
+    """Piecewise-linear interpolation of a discrete n-point window
+    (weights, implicitly sampled at u_k = 2k/(n-1) - 1, k = 0..n-1) at an
+    arbitrary position u in [-1, 1] (clamped if outside) -- lets a
+    discrete, whole-array-constructed window (Chebyshev/Taylor, which
+    have no continuous formula of their own the way _window_shape's
+    windows do) be treated as an evaluable shape function the same way
+    those are, so steered_window_weights' re-centering can apply to them
+    too instead of leaving them un-steered. This is the same honesty
+    trade-off arc_steered_aim_index and steered_window_weights already
+    make for the other 9 windows -- a reasonable, bounded approximation
+    (re-sampling a Chebyshev-optimal array off-center forfeits its exact
+    equal-ripple property, same as those windows' own steering was never
+    claimed to be optimal either), not a derived or verified result."""
+    n = len(weights)
+    if n <= 1:
+        return weights[0] if weights else 1.0
+    u = max(-1.0, min(1.0, u))
+    pos = (u + 1.0) / 2.0 * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    frac = pos - lo
+    return weights[lo] * (1.0 - frac) + weights[hi] * frac
+
+
+def steered_window_weights(n: int, window: str, center_index: float,
+                            sidelobe_db: float = 30.0) -> list[float]:
     """Same window shapes as window_weights, but with the peak (u = 0)
     moved to center_index (any real value in [0, n-1], not necessarily
     the array's physical middle or even an integer element) instead of
@@ -777,9 +991,21 @@ def steered_window_weights(n: int, window: str, center_index: float) -> list[flo
     aim point rather than staying pinned to the physical center. Falls
     back to window_weights' own symmetric shape when center_index is
     exactly (n-1)/2 (each side independently re-normalized to still
-    reach the window's outer edge value there, same as window_weights)."""
+    reach the window's outer edge value there, same as window_weights).
+
+    Chebyshev/Taylor (PARAMETRIC_TAPER_WINDOWS) use the same left/right
+    asymmetric-stretch construction as every other window here, just
+    evaluated against _interp_shape's linear interpolation of the plain
+    centered n-point array (window_weights) instead of _window_shape's
+    continuous formula, since they have no such formula of their own --
+    see _interp_shape."""
     if n <= 1:
         return [1.0] * n
+    if window in PARAMETRIC_TAPER_WINDOWS:
+        base = window_weights(n, window, sidelobe_db)
+        shape = lambda u: _interp_shape(base, u)
+    else:
+        shape = lambda u: _window_shape(u, window)
     left_span = center_index
     right_span = (n - 1) - center_index
     out = []
@@ -788,7 +1014,7 @@ def steered_window_weights(n: int, window: str, center_index: float) -> list[flo
             u = (i - center_index) / left_span if left_span > 0 else 0.0
         else:
             u = (i - center_index) / right_span if right_span > 0 else 0.0
-        out.append(_window_shape(u, window))
+        out.append(shape(u))
     return out
 
 
@@ -820,22 +1046,95 @@ def arc_steered_aim_index(n: int, angle_deg: float, steer_deg: float) -> float:
     return center + phi_star / d_phi
 
 
-def level_taper_db(n: int, window: str, max_atten_db: float, center_index: float = None) -> list[float]:
-    """Per-element gain trim, in dB, for a level taper across n elements:
-    0 dB at the window's peak, fading to -max_atten_db at its minimum,
-    shaped by the chosen window. The peak sits at the array's center
-    element(s) unless center_index is given (see steered_window_weights),
-    e.g. to keep the taper following Arc steering's shifted aim point.
+def level_taper_db(n: int, window: str, max_atten_db: float, center_index: float = None,
+                    sidelobe_db: float = 30.0) -> list[float]:
+    """Per-element gain trim, in dB, for a level taper across n elements.
 
-    This linearly maps the window's 0-1 amplitude shape onto a
+    For the 9 classic DSP windows: 0 dB at the window's peak, fading to
+    -max_atten_db at its minimum, shaped by the chosen window. This
+    linearly maps the window's 0-1 amplitude shape onto a
     0..-max_atten_db dB range, rather than taking a literal 20*log10 of
     the window value -- Hann/Blackman reach exactly 0 at the edges, and
     20*log10(0) is -inf, which isn't a usable gain trim. The linear
     mapping keeps the taper bounded and its depth directly set by
-    max_atten_db, at the cost of not being a literal amplitude window."""
+    max_atten_db, at the cost of not being a literal amplitude window.
+    The peak sits at the array's center element(s) unless center_index is
+    given (see steered_window_weights), e.g. to keep the taper following
+    Arc steering's shifted aim point.
+
+    For Chebyshev/Taylor (PARAMETRIC_TAPER_WINDOWS): max_atten_db is
+    ignored and the trim is instead a literal 20*log10(w/peak) of the
+    window's own amplitude weights -- unlike the other 9 windows, these
+    never reach exactly 0 for a sane sidelobe_db, so there's no -inf
+    problem to work around, and taking the literal dB is the whole
+    point: it's what makes the edge elements land at (approximately, and
+    for Chebyshev exactly, when centered) -sidelobe_db, the equal-ripple
+    sidelobe level the window was designed to give. center_index still
+    applies via steered_window_weights' interpolated re-centering (see
+    its docstring) -- steering trades away that exact-at-center-position
+    guarantee the same way it does for every other window here."""
+    if window in PARAMETRIC_TAPER_WINDOWS:
+        w = (window_weights(n, window, sidelobe_db) if center_index is None
+             else steered_window_weights(n, window, center_index, sidelobe_db))
+        peak = max(w) if w else 1.0
+        if peak <= 0:
+            return [0.0] * n
+        return [20.0 * math.log10(max(wi, 1e-9) / peak) for wi in w]
     w = (window_weights(n, window) if center_index is None
          else steered_window_weights(n, window, center_index))
     peak = max(w) if w else 1.0
     if peak <= 0:
         return [0.0] * n
     return [-max_atten_db * (1.0 - wi / peak) for wi in w]
+
+
+def taper_onaxis_loss_db(gain_trim_db: list[float]) -> float:
+    """On-axis SPL change, in dB, from applying gain_trim_db (e.g.
+    level_taper_db's output) relative to every element at 0 dB
+    (untapered) -- the number that matters most for a real show: a
+    correctly steered/delayed array sums its elements *in phase* on
+    axis, so the coherent on-axis pressure scales with the mean of the
+    LINEAR gains, not their power:
+
+        loss_db = 20*log10( mean(10**(g/20) for g in gain_trim_db) )
+
+    This is the practical cost side of any taper (classic window or
+    Chebyshev/Taylor alike) that the pattern-control benefit doesn't
+    show up in a simulator's polar plot: every dB of taper depth you
+    dial in for sidelobe control is a dB you're not getting back as
+    forward SPL, because the attenuated elements are still there,
+    still costing you an amplifier channel and a box, contributing less
+    toward the front. 0.0 for Uniform / 0 dB max atten (every element
+    still at unity)."""
+    if not gain_trim_db:
+        return 0.0
+    lin = [10.0 ** (g / 20.0) for g in gain_trim_db]
+    mean_lin = sum(lin) / len(lin)
+    if mean_lin <= 0:
+        return float("-inf")
+    return 20.0 * math.log10(mean_lin)
+
+
+def taper_power_loss_db(gain_trim_db: list[float]) -> float:
+    """Total radiated acoustic power change, in dB, from applying
+    gain_trim_db relative to uniform -- the incoherent sum of each
+    element's own power (proportional to gain squared), not the
+    coherent on-axis sum taper_onaxis_loss_db computes. This is the
+    number closer to total amplifier/driver headroom spent rather than
+    what a listener on axis actually hears:
+
+        loss_db = 10*log10( mean(10**(g/10) for g in gain_trim_db) )
+
+    Always >= taper_onaxis_loss_db for the same taper, since the mean
+    of squared linear gains is never less than the square of their mean
+    (variance can't be negative) -- tapering always costs more on-axis
+    SPL than it costs total radiated power, because some of an
+    untapered element's power would only have gone into sidelobes
+    anyway."""
+    if not gain_trim_db:
+        return 0.0
+    lin = [10.0 ** (g / 10.0) for g in gain_trim_db]
+    mean_lin = sum(lin) / len(lin)
+    if mean_lin <= 0:
+        return float("-inf")
+    return 10.0 * math.log10(mean_lin)

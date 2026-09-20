@@ -24,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 
 import os
 import tkinter as tk
@@ -40,12 +40,13 @@ from array_math import (
     sub_positions_arc_hybrid_lateral, sub_positions_arc_hybrid_depth,
     physical_ellipse_layout, progressive_arc_layout, min_adjacent_chord,
     ellipse_ratio_from_far, angle_from_far_ellipse, focus_point,
-    freq_at_wavelength_fraction, spacing_at_wavelength_fraction,
+    freq_at_wavelength_fraction, spacing_at_wavelength_fraction, grating_lobe_max_spacing_m,
     far_from_venue, arc_from_far, sub_positions, sub_positions_gradient, sub_positions_centered, array_length,
     gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db,
     delay_ms_for_distance, distance_for_delay_ms, delay_samples, speed_of_sound,
     required_group_delay_ms, spacing_clearance_m,
-    LEVEL_TAPER_WINDOWS, level_taper_db, arc_steered_aim_index,
+    LEVEL_TAPER_WINDOWS, PARAMETRIC_TAPER_WINDOWS, level_taper_db, arc_steered_aim_index,
+    taper_onaxis_loss_db, taper_power_loss_db,
 )
 from sub_profiles import load_profiles
 from prealign_profiles import (
@@ -75,9 +76,44 @@ ANGLE_TOPOLOGIES = (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) + ARC_HYBRID_TOPO
 # Progressive Arc is deliberately not included -- its own Progression ratio
 # is a different, not-yet-combined generalization of the same circle.
 ELLIPSE_TOPOLOGIES = (TOPO_PHYSICAL, TOPO_ARC) + ARC_HYBRID_TOPOLOGIES
+# Topologies with a Steer control -- Arc / Broadside Steering and the two Arc
+# Hybrids (Physical Horizontal Array, Progressive Arc, and Focus Point have no
+# electronic steering concept: their delay is either fixed at 0 or solved for
+# a focus point instead). Shared constant for the same reason ANGLE_TOPOLOGIES
+# and ELLIPSE_TOPOLOGIES are -- one definition instead of two that could drift
+# apart (see ANGLE_TOPOLOGIES' comment for the bug that taught that lesson).
+STEER_TOPOLOGIES = (TOPO_ARC,) + ARC_HYBRID_TOPOLOGIES
+# Topologies with a front/rear differential (Gradient) pair whose pattern is
+# tunable via alpha -- Gradient / Cardioid Pairs itself and Gradient Arc
+# Hybrid (End-Fire Arc Hybrid's pairs are same-polarity, not a differential
+# pair, so alpha doesn't apply there).
+GRADIENT_PATTERN_TOPOLOGIES = (TOPO_GRADIENT, TOPO_GRAD_ARC_HYBRID)
 
 SHAPE_CIRCLE, SHAPE_ELLIPSE = "Circle", "Ellipse"
 PHYSICAL_SHAPES = [SHAPE_CIRCLE, SHAPE_ELLIPSE]
+
+# Which physical axis the table's X/Y columns (and Manual mode's typed X/Y
+# fields) represent. L-Acoustics (default): Y = depth (into the room),
+# X = lateral (across the room). d&b swaps them: X = depth, Y = lateral --
+# this app's original convention, before L-Acoustics became the default.
+# Purely a labelling/entry convention -- the actual geometry and delay math
+# never change, only which column means what.
+XY_DNB, XY_LACOUSTICS = "d&b Mode", "L-Acoustics Mode"
+XY_CONVENTIONS = [XY_DNB, XY_LACOUSTICS]
+
+# Named first-order differential-array patterns -> alpha (array_math's
+# gradient_pair_delay_ms), standard values from the differential-microphone-
+# array literature (hypercardioid/supercardioid/cardioid are the commonly
+# published exact figures; subcardioid is the conventional cardioid/omni
+# midpoint, less rigidly standardized than the other three).
+GRADIENT_PATTERN_ALPHA = {
+    "Figure-8": 0.0,
+    "Hypercardioid": 0.25,
+    "Supercardioid": 0.37,
+    "Cardioid": 0.5,
+    "Subcardioid": 0.75,
+}
+GRADIENT_PATTERNS = list(GRADIENT_PATTERN_ALPHA)
 
 WAVELENGTH_FRACTION = {
     TOPO_END_FIRE: 0.25,
@@ -178,6 +214,7 @@ class App(tk.Tk):
         # left column: primary/frequently-used controls + the per-sub table
         self._build_project_panel()
         self._build_controls()
+        self._build_topology_options_panel()
         self._build_taper_panel()
         self._build_bandwidth_panel()
         self._build_info_panel()
@@ -196,7 +233,13 @@ class App(tk.Tk):
 
         ttk.Label(self, text="Array math from Merlijn van Veen's S.A.D. (Subwoofer Array Designer) — "
                               "merlijnvanveen.nl", foreground="#888", font=("Segoe UI", 8)).grid(
-            row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
+            row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 0))
+        ttk.Label(self, text="S.A.D. Realtime — freekieaudio.uk", foreground="#888",
+                  font=("Segoe UI", 8)).grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
+        ttk.Label(self, text="100% vibe coded — use at your own risk, check all calculations before use.",
+                  foreground="#a03030", font=("Segoe UI", 8, "bold")).grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
 
         self._on_topology_change()
         self._update_venue_far()
@@ -329,17 +372,31 @@ class App(tk.Tk):
         self.wavelength_label = ttk.Label(frm, text="", width=16)
         self.wavelength_label.grid(row=2, column=3, sticky="w", padx=5, pady=5)
 
+        frm.grid_columnconfigure(2, weight=1)
+
+    # ------------------------------------------------------- topology opts --
+    def _build_topology_options_panel(self):
+        """Everything that only some topologies use (arc/steer/shape/hybrid
+        row spacing/progression/focus/gradient pattern), split out of Array
+        so that panel stays a stable 3 rows and this one carries the growth
+        -- was previously the two panels crammed together, which meant a
+        topology like Gradient Arc Hybrid stacked nine unrelated rows into
+        one "Array" box."""
+        frm = ttk.LabelFrame(self.left_col, text="Topology options")
+        frm.pack(fill="x", padx=10, pady=5)
+        self.topology_options_frame = frm
+
         self.row_spacing_label = ttk.Label(frm, text="Row spacing")
-        self.row_spacing_label.grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        self.row_spacing_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
         self.row_spacing = tk.DoubleVar(value=0.7)
-        self.row_spacing_spin = self._make_length_field(frm, self.row_spacing, row=3, col=1)
+        self.row_spacing_spin = self._make_length_field(frm, self.row_spacing, row=0, col=1)
         self.row_spacing_slider = ttk.Scale(frm, from_=0.1, to=5.0, orient="horizontal", variable=self.row_spacing,
                                              command=self._on_row_spacing_slider)
-        self.row_spacing_slider.grid(row=3, column=2, sticky="ew", padx=5, pady=5)
+        self.row_spacing_slider.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
         self.row_wavelength_label = ttk.Label(frm, text="", width=16)
-        self.row_wavelength_label.grid(row=3, column=3, sticky="w", padx=5, pady=5)
+        self.row_wavelength_label.grid(row=0, column=3, sticky="w", padx=5, pady=5)
         self.row_spacing_help = self._help_icon(
-            frm, row=3, col=4,
+            frm, row=0, col=4,
             text="Front-to-back spacing within each column, for the two Arc Hybrid "
                  "topologies -- the internal End-Fire/Gradient pair depth, separate from "
                  "Spacing above (which is the column-to-column lateral spacing along the "
@@ -349,39 +406,39 @@ class App(tk.Tk):
 
         self.angle = tk.DoubleVar(value=0.0)
         self.angle_label, self.angle_spin, self.angle_slider = self._labeled_slider(
-            frm, "Arc (°)", self.angle, 0.0, 180.0, row=4, increment=1.0, decimals=1)
+            frm, "Arc (°)", self.angle, 0.0, 180.0, row=1, increment=1.0, decimals=1)
 
         self.far_label = ttk.Label(frm, text="FAR: -", width=12)
-        self.far_label.grid(row=4, column=3, sticky="w", padx=5, pady=5)
+        self.far_label.grid(row=1, column=3, sticky="w", padx=5, pady=5)
 
         self.radius_label = ttk.Label(frm, text="Radius")
-        self.radius_label.grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        self.radius_label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
         self.radius = tk.DoubleVar(value=2.0)
-        self.radius_spin = self._make_length_field(frm, self.radius, row=5, col=1)
+        self.radius_spin = self._make_length_field(frm, self.radius, row=2, col=1)
 
         self.steer = tk.DoubleVar(value=0.0)
         self.steer_label, self.steer_spin, self.steer_slider = self._labeled_slider(
-            frm, "Steer (°)", self.steer, -90.0, 90.0, row=6, increment=1.0, decimals=1)
+            frm, "Steer (°)", self.steer, -90.0, 90.0, row=3, increment=1.0, decimals=1)
         self.steer_help = self._help_icon(
-            frm, row=6, col=3,
+            frm, row=3, col=3,
             text="Redirects the whole arc's aim off-centre without changing its coverage "
                  "angle (FAR) -- for venues that aren't symmetrical about the array's own "
                  "centreline. Positive steers toward the highest-numbered sub. 0 = the "
                  "default symmetric aim, straight ahead.")
 
         self.shape_label = ttk.Label(frm, text="Shape")
-        self.shape_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
+        self.shape_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
         self.shape = tk.StringVar(value=SHAPE_CIRCLE)
         self.shape_cb = ttk.Combobox(frm, textvariable=self.shape, values=PHYSICAL_SHAPES,
                                       state="readonly", width=10)
-        self.shape_cb.grid(row=7, column=1, sticky="w", padx=5, pady=5)
+        self.shape_cb.grid(row=4, column=1, sticky="w", padx=5, pady=5)
         self.shape_cb.bind("<<ComboboxSelected>>", lambda e: self._on_shape_change())
 
         self.ellipse_ratio = tk.DoubleVar(value=1.0)
         self.ellipse_ratio_label, self.ellipse_ratio_spin, self.ellipse_ratio_slider = self._labeled_slider(
-            frm, "Ellipse ratio", self.ellipse_ratio, 0.05, 2.0, row=8, increment=0.05, decimals=2)
+            frm, "Ellipse ratio", self.ellipse_ratio, 0.05, 2.0, row=5, increment=0.05, decimals=2)
         self.ellipse_ratio_help = self._help_icon(
-            frm, row=8, col=3,
+            frm, row=5, col=3,
             text="Depth-scale ratio for Shape = Ellipse: 1.0 is a true circle (identical to "
                  "Shape = Circle); below 1 flattens the bow, above 1 exaggerates it. For "
                  "Physical Horizontal Array this scales the real physical placement (Radius "
@@ -398,9 +455,9 @@ class App(tk.Tk):
 
         self.progression_ratio = tk.DoubleVar(value=1.0)
         self.progression_label, self.progression_spin, self.progression_slider = self._labeled_slider(
-            frm, "Progression", self.progression_ratio, 1.0, 8.0, row=9, increment=0.1, decimals=2)
+            frm, "Progression", self.progression_ratio, 1.0, 8.0, row=6, increment=0.1, decimals=2)
         self.progression_help = self._help_icon(
-            frm, row=9, col=3,
+            frm, row=6, col=3,
             text="Center:edge angular-step ratio for Progressive Arc -- 1.0 is a uniform "
                  "circular arc (identical to Physical Horizontal Array); above 1 makes the "
                  "center gap(s) progressively wider (tighter curvature there) and the edge "
@@ -412,22 +469,46 @@ class App(tk.Tk):
                  "verify it against.")
 
         self.focus_x_label = ttk.Label(frm, text="Focus X")
-        self.focus_x_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+        self.focus_x_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
         self.focus_x = tk.DoubleVar(value=10.0)
-        self.focus_x_spin = self._make_length_field(frm, self.focus_x, row=10, col=1)
+        self.focus_x_spin = self._make_length_field(frm, self.focus_x, row=7, col=1)
 
         self.focus_y_label = ttk.Label(frm, text="Focus Y")
-        self.focus_y_label.grid(row=11, column=0, sticky="w", padx=5, pady=5)
+        self.focus_y_label.grid(row=8, column=0, sticky="w", padx=5, pady=5)
         self.focus_y = tk.DoubleVar(value=0.0)
-        self.focus_y_spin = self._make_length_field(frm, self.focus_y, row=11, col=1)
+        self.focus_y_spin = self._make_length_field(frm, self.focus_y, row=8, col=1)
         self.focus_help = self._help_icon(
-            frm, row=11, col=3,
+            frm, row=8, col=3,
             text="Focus Point (\"Destruction Mode\") delays every sub so its output arrives "
                  "at one target point at the same instant, for maximum constructive buildup "
                  "there -- Focus X is how far out in front of the line the target sits, "
                  "Focus Y is its lateral offset from the line's own center (0 = dead ahead). "
                  "Near-field acoustic focusing, exact by construction (not an approximation) "
                  "-- this app's own extension, not a S.A.D. topology.")
+
+        self.pattern_label = ttk.Label(frm, text="Pattern")
+        self.pattern_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+        self.gradient_pattern = tk.StringVar(value="Cardioid")
+        self.pattern_cb = ttk.Combobox(frm, textvariable=self.gradient_pattern,
+                                        values=GRADIENT_PATTERNS + [CUSTOM_PROFILE],
+                                        state="readonly", width=13)
+        self.pattern_cb.grid(row=9, column=1, sticky="w", padx=5, pady=5)
+        self.pattern_cb.bind("<<ComboboxSelected>>", self._on_gradient_pattern_change)
+
+        self.gradient_alpha = tk.DoubleVar(value=0.5)
+        self.alpha_label, self.alpha_spin, self.alpha_slider = self._labeled_slider(
+            frm, "Pattern α", self.gradient_alpha, 0.0, 0.9, row=10, increment=0.01,
+            decimals=3, on_commit=self._on_gradient_alpha_edited)
+        self.pattern_help = self._help_icon(
+            frm, row=10, col=3,
+            text="Front/rear delay ratio for the differential (Gradient) pair, generalizing "
+                 "the fixed cardioid null (α = 0.5, straight behind the pair) to the standard "
+                 "first-order pattern family E(θ) = α + (1-α)·cosθ: rear delay = transit time × "
+                 "α/(1-α), still reversed polarity. Named presets are the standard values "
+                 "(Figure-8 0, Hypercardioid 0.25, Supercardioid 0.37, Cardioid 0.5, Subcardioid "
+                 "0.75); editing α directly resets Pattern to \"— custom —\", same as Sub box "
+                 "dimensions' Profile field. Capped below 1.0 -- that's the unreachable omni "
+                 "limit, needing impractically large delay for a fixed small spacing.")
 
         frm.grid_columnconfigure(2, weight=1)
 
@@ -450,9 +531,11 @@ class App(tk.Tk):
             pass
         self._on_change()
 
-    def _labeled_slider(self, parent, text, var, lo, hi, row, increment=0.1, decimals=None):
+    def _labeled_slider(self, parent, text, var, lo, hi, row, increment=0.1, decimals=None,
+                         on_commit=None):
         label = ttk.Label(parent, text=text)
         label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+        commit = on_commit or self._on_change
 
         def quantize():
             if decimals is not None:
@@ -460,7 +543,7 @@ class App(tk.Tk):
                     var.set(round(var.get(), decimals))
                 except tk.TclError:
                     return
-            self._on_change()
+            commit()
 
         spin = ttk.Spinbox(parent, from_=lo, to=hi, increment=increment, textvariable=var, width=8,
                             command=quantize)
@@ -474,12 +557,28 @@ class App(tk.Tk):
                     var.set(round(float(v), decimals))
                 except (tk.TclError, ValueError):
                     pass
-            self._on_change()
+            commit()
 
         slider = ttk.Scale(parent, from_=lo, to=hi, orient="horizontal", variable=var,
                             command=on_slide)
         slider.grid(row=row, column=2, sticky="ew", padx=5, pady=5)
         return label, spin, slider
+
+    def _on_gradient_pattern_change(self, *_):
+        """Picking a named Pattern sets alpha to that preset's value, same
+        "dropdown fills a field, the field stays independently editable"
+        convention as Sub box dimensions' Profile -> Width/Depth."""
+        name = self.gradient_pattern.get()
+        if name == CUSTOM_PROFILE:
+            return
+        self.gradient_alpha.set(GRADIENT_PATTERN_ALPHA[name])
+        self._on_change()
+
+    def _on_gradient_alpha_edited(self):
+        """Hand-editing alpha (spin or slider) resets Pattern to custom,
+        same convention as Sub box dimensions' _on_dimension_edited."""
+        self.gradient_pattern.set(CUSTOM_PROFILE)
+        self._on_change()
 
     @staticmethod
     def _set_widgets_visible(widgets, visible):
@@ -516,20 +615,30 @@ class App(tk.Tk):
         window_cb = ttk.Combobox(frm, textvariable=self.taper_window, values=LEVEL_TAPER_WINDOWS,
                                   state="readonly", width=10)
         window_cb.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        window_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
+        window_cb.bind("<<ComboboxSelected>>", lambda e: self._on_taper_window_change())
 
-        ttk.Label(frm, text="Max atten (dB)").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.atten_label = ttk.Label(frm, text="Max atten (dB)")
+        self.atten_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
         self.taper_max_atten = tk.DoubleVar(value=0.0)
-        atten_spin = ttk.Spinbox(frm, from_=0.0, to=30.0, increment=0.5,
-                                  textvariable=self.taper_max_atten, width=6, command=self._on_change)
-        atten_spin.grid(row=0, column=3, sticky="w", padx=5, pady=5)
-        atten_spin.bind("<Return>", lambda e: self._on_change())
-        atten_spin.bind("<FocusOut>", lambda e: self._on_change())
+        self.atten_spin = ttk.Spinbox(frm, from_=0.0, to=30.0, increment=0.5,
+                                       textvariable=self.taper_max_atten, width=6, command=self._on_change)
+        self.atten_spin.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.atten_spin.bind("<Return>", lambda e: self._on_change())
+        self.atten_spin.bind("<FocusOut>", lambda e: self._on_change())
+
+        self.sidelobe_label = ttk.Label(frm, text="Sidelobe (dB)")
+        self.sidelobe_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.taper_sidelobe_db = tk.DoubleVar(value=30.0)
+        self.sidelobe_spin = ttk.Spinbox(frm, from_=10.0, to=100.0, increment=1.0,
+                                          textvariable=self.taper_sidelobe_db, width=6, command=self._on_change)
+        self.sidelobe_spin.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.sidelobe_spin.bind("<Return>", lambda e: self._on_change())
+        self.sidelobe_spin.bind("<FocusOut>", lambda e: self._on_change())
 
         self._help_icon(frm, row=0, col=4,
                          text="Live gain taper, always following each sub's Gain trim -- 0 dB at the "
                               "window's peak, fading to -max atten at its minimum, shaped by the chosen "
-                              "window (9 classic sidelobe-control windows; Uniform or 0 dB = flat, no "
+                              "window (11 sidelobe-control windows; Uniform or 0 dB max atten = flat, no "
                               "taper). For the two Arc Hybrid topologies, the taper is computed across "
                               "columns, not individual subs -- both the front and rear sub in a column get "
                               "that column's trim. For Arc / Broadside Steering and the Arc Hybrids, the peak "
@@ -538,9 +647,51 @@ class App(tk.Tk):
                               "is a known exception "
                               "to \"monotonic taper\" — it's an amplitude-accuracy window with a small "
                               "ripple near the edges by design, so it can dip slightly past -max atten "
-                              "there; that's correct for Flat Top, not a bug. This app has no polar/SPL "
-                              "prediction, so you won't see the sidelobe reduction visually — it's standard "
-                              "array theory applied on faith, not a result verified in-app.")
+                              "there; that's correct for Flat Top, not a bug. Chebyshev/Taylor replace Max "
+                              "atten with Sidelobe (dB): their gain trim is a literal dB of the window's own "
+                              "equal-ripple amplitude shape, not the linear max-atten remap the other 9 "
+                              "windows use, so the edge elements land at (Chebyshev: exactly; Taylor: "
+                              "approximately) that many dB down when centred. They follow Steer the same as "
+                              "the other 9 windows too, by linearly interpolating the plain centred array "
+                              "instead of re-sampling a continuous formula (they have none) -- off-centre "
+                              "this trades away the exact equal-ripple guarantee, same trade-off Steer's "
+                              "aim-point approximation already makes for every other window. This "
+                              "app has no polar/SPL prediction, so you won't see the sidelobe reduction "
+                              "visually — it's standard array theory applied on faith, not a result verified "
+                              "in-app.")
+
+        is_parametric = self.taper_window.get() in PARAMETRIC_TAPER_WINDOWS
+        self._set_widgets_visible((self.sidelobe_label, self.sidelobe_spin), is_parametric)
+        self._set_widgets_visible((self.atten_label, self.atten_spin), not is_parametric)
+
+        self.taper_cost_label = ttk.Label(frm, text="taper cost: -", width=48)
+        self.taper_cost_label.grid(row=1, column=0, columnspan=4, sticky="w", padx=5, pady=5)
+        self._help_icon(
+            frm, row=1, col=4,
+            text="The real-world price of this taper, not visible in a polar-prediction plot: "
+                 "on-axis loss is the forward SPL you give up because a correctly steered array sums "
+                 "its elements in phase, so on-axis pressure follows the *mean of the linear gains* "
+                 "(taper_onaxis_loss_db in array_math.py) -- every dB of edge attenuation you dial in "
+                 "for sidelobe control is a dB you don't get back as forward level, from a box that's "
+                 "still costing you an amplifier channel and rigging weight. Total power is the same "
+                 "idea for the incoherent power sum instead (taper_power_loss_db) -- closer to overall "
+                 "amplifier/driver headroom spent than to what the room hears. Total power loss is "
+                 "always the smaller of the two (less negative), since on-axis coherent summation is "
+                 "hurt by tapering more than raw radiated power is. Applies to every window here, not "
+                 "just Chebyshev/Taylor -- a deep Hann/Blackman taper costs the same way. Deep "
+                 "sidelobe targets on a small array can cost several dB of forward level for a pattern "
+                 "benefit this app can't show you (no polar/SPL prediction) -- worth cross-checking "
+                 "against a prediction tool before committing a show to a heavy taper.")
+
+    def _on_taper_window_change(self):
+        """Chebyshev/Taylor need a Sidelobe (dB) parameter instead of Max
+        atten -- swap which one shows in that grid cell before re-syncing
+        the taper, same "show one of two mutually exclusive controls"
+        pattern as Shape's Circle/Ellipse fields elsewhere in this app."""
+        is_parametric = self.taper_window.get() in PARAMETRIC_TAPER_WINDOWS
+        self._set_widgets_visible((self.sidelobe_label, self.sidelobe_spin), is_parametric)
+        self._set_widgets_visible((self.atten_label, self.atten_spin), not is_parametric)
+        self._on_change()
 
     def _sync_level_taper(self):
         """Keeps Gain trim live-following the Level taper window for Arc /
@@ -561,6 +712,7 @@ class App(tk.Tk):
             n = self.count.get()
             window = self.taper_window.get()
             max_atten = self.taper_max_atten.get()
+            sidelobe_db = self.taper_sidelobe_db.get()
         except tk.TclError:
             return
         center_index = None
@@ -570,7 +722,7 @@ class App(tk.Tk):
             except tk.TclError:
                 center_index = None
         try:
-            taper = level_taper_db(n, window, max_atten, center_index)
+            taper = level_taper_db(n, window, max_atten, center_index, sidelobe_db)
         except ValueError:
             return
         for i, db in enumerate(taper):
@@ -578,6 +730,10 @@ class App(tk.Tk):
             for j in targets:
                 if j < len(self.trim_vars):
                     self.trim_vars[j].set(round(db, 2))
+        onaxis = taper_onaxis_loss_db(taper)
+        power = taper_power_loss_db(taper)
+        self.taper_cost_label.config(
+            text=f"taper cost: {onaxis:.2f} dB on-axis, {power:.2f} dB total power (vs. uniform)")
 
     # --------------------------------------------------------------- units --
     def _build_units_panel(self):
@@ -595,6 +751,43 @@ class App(tk.Tk):
                               "stored and computed in metres internally — this only changes what you type "
                               "and see in those fields. Read-only results (Y column, collision/alignment/FAR "
                               "text) stay in metres.")
+
+        ttk.Label(frm, text="X/Y convention").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.xy_convention = tk.StringVar(value=XY_LACOUSTICS)
+        xy_cb = ttk.Combobox(frm, textvariable=self.xy_convention, values=XY_CONVENTIONS,
+                              state="readonly", width=14)
+        xy_cb.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        xy_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
+
+        self._help_icon(frm, row=1, col=2,
+                         text=f"Which axis is which in the per-sub table's X/Y columns and Manual mode's "
+                              f"typed X/Y fields. \"{XY_LACOUSTICS}\" (default): Y = depth, into the room "
+                              f"(front-to-back); X = lateral, across the room -- matching L-Acoustics' own "
+                              f"layout tools. \"{XY_DNB}\": swapped -- X = depth, into the room; Y = lateral, "
+                              f"across the room -- this app's original convention. Purely a labelling/entry "
+                              f"convention -- the underlying geometry and delay math are identical either "
+                              f"way, only which column means which physical direction changes.")
+
+    def _dnb_mode(self) -> bool:
+        return self.xy_convention.get() == XY_DNB
+
+    def _manual_depth_vars(self):
+        """Whichever of manual_x_vars/manual_y_vars currently represents
+        depth (front-to-back, into the room), per the X/Y convention."""
+        return self.manual_x_vars if self._dnb_mode() else self.manual_y_vars
+
+    def _manual_lateral_vars(self):
+        """Whichever of manual_x_vars/manual_y_vars currently represents
+        lateral (side-to-side, across the room), per the X/Y convention."""
+        return self.manual_y_vars if self._dnb_mode() else self.manual_x_vars
+
+    def _manual_note_text(self):
+        depth_col, lateral_col = ("X", "Y") if self._dnb_mode() else ("Y", "X")
+        return (f"Place each sub freely: type {depth_col} (depth, front-to-back — larger/less-negative is "
+                f"closer to the audience) and {lateral_col} (lateral, informational only) directly. Delay is "
+                f"derived, not typed — the rearmost placed sub (smallest {depth_col}) is the 0 ms reference, "
+                "same plane-wave-towards-the-audience logic as End-Fire, generalised to free 2D placement. "
+                "Gain trim and Polarity stay directly editable.")
 
     def _on_unit_change(self):
         self._refresh_unit_displays()
@@ -1115,6 +1308,21 @@ class App(tk.Tk):
             return f"⚠ {box_dim:.2f} m {dim_name} > {spacing:.2f} m spacing (by {-clearance:.2f} m)"
         return f"OK — {clearance:.2f} m clearance ({dim_name})"
 
+    def _grating_lobe_text(self):
+        try:
+            steer = self.steer.get()
+            d_max = grating_lobe_max_spacing_m(self.freq_high.get(), self._speed_of_sound(), steer)
+            spacing = self.spacing.get()
+        except tk.TclError:
+            return "-"
+        if d_max is None:
+            return "-"
+        margin = d_max - spacing
+        if margin < 0:
+            return (f"⚠ grating-lobe risk: {spacing:.2f} m spacing > {d_max:.2f} m limit "
+                    f"at Steer {steer:.0f}° (by {-margin:.2f} m)")
+        return f"OK — grating-lobe limit {d_max:.2f} m at Steer {steer:.0f}° ({margin:.2f} m headroom)"
+
     def _update_collision_check(self):
         if self.topology.get() in ARC_HYBRID_TOPOLOGIES:
             # Two independent physical checks here, not one: column spacing
@@ -1332,6 +1540,19 @@ class App(tk.Tk):
                  "High (Hz) above, the End-Fire/Gradient rule, since Row spacing is that same "
                  "front/rear pair depth inside each column, regardless of the ½λ rule used for "
                  "the column Spacing above.")
+
+        self.grating_lobe_label = ttk.Label(frm, text="-", width=58)
+        self.grating_lobe_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=5, pady=5)
+        self.grating_lobe_help = self._help_icon(
+            frm, row=2, col=4,
+            text="Steer-aware grating-lobe spacing limit: d < λ / (1 + |sin(Steer)|), the phased-"
+                 "array-antenna criterion for keeping a spurious lobe out of visible space, evaluated "
+                 "at High (Hz) and the array's current Steer angle -- a rigorous, steer-dependent "
+                 "check alongside the ½λ rule of thumb above, which is a comb-filtering guideline "
+                 "that doesn't account for Steer at all. Loosest (a full wavelength) at Steer = 0°, "
+                 "tightening smoothly to ½λ at ±90°. Only accounts for Steer, not the additional "
+                 "local curvature of a wide Arc angle itself -- shown for Arc / Broadside Steering and "
+                 "the two Arc Hybrids, the topologies with a Steer control.")
 
     def _wavelength_fraction(self):
         return WAVELENGTH_FRACTION.get(self.topology.get())
@@ -1614,15 +1835,17 @@ class App(tk.Tk):
         is_ellipse_capable = topo in ELLIPSE_TOPOLOGIES
         is_ellipse = is_ellipse_capable and self.shape.get() == SHAPE_ELLIPSE
         uses_angle = topo in ANGLE_TOPOLOGIES
-        uses_steer = is_arc or is_hybrid
+        uses_steer = topo in STEER_TOPOLOGIES
         uses_radius = is_physical or is_progressive
         no_spacing = is_physical or is_manual or is_progressive
+        uses_gradient_pattern = topo in GRADIENT_PATTERN_TOPOLOGIES
 
         self._set_widgets_visible(
             (self.angle_label, self.angle_spin, self.angle_slider, self.far_label), uses_angle)
         self._set_widgets_visible((self.radius_label, self.radius_spin), uses_radius)
         self._set_widgets_visible(
             (self.steer_label, self.steer_spin, self.steer_slider, self.steer_help), uses_steer)
+        self._set_widgets_visible((self.grating_lobe_label, self.grating_lobe_help), uses_steer)
         self._set_widgets_visible(
             (self.spacing_label, self.spacing_spin, self.spacing_slider, self.wavelength_label),
             not no_spacing)
@@ -1643,6 +1866,16 @@ class App(tk.Tk):
         self._set_widgets_visible(
             (self.focus_x_label, self.focus_x_spin, self.focus_y_label, self.focus_y_spin,
              self.focus_help), is_focus)
+        self._set_widgets_visible(
+            (self.pattern_label, self.pattern_cb, self.alpha_label, self.alpha_spin,
+             self.alpha_slider, self.pattern_help), uses_gradient_pattern)
+        has_topology_options = (uses_angle or uses_radius or uses_steer or is_hybrid
+                                 or is_ellipse_capable or is_progressive or is_focus
+                                 or uses_gradient_pattern)
+        if has_topology_options:
+            self.topology_options_frame.pack(fill="x", padx=10, pady=5, after=self.spacing_label.master)
+        else:
+            self.topology_options_frame.pack_forget()
         if uses_angle:
             self.venue_frame.pack(fill="x", padx=10, pady=5, before=self.dimensions_frame)
             self.taper_frame.pack(fill="x", padx=10, pady=5, before=self.bandwidth_frame)
@@ -1711,11 +1944,7 @@ class App(tk.Tk):
                      "at the same instant, for maximum constructive buildup there. Near-field acoustic "
                      "focusing -- exact by construction from geometry alone, not an approximation. This app's "
                      "own extension, not a S.A.D. topology.",
-            TOPO_MANUAL: "Place each sub freely: type X (depth, front-to-back — larger/less-negative is closer "
-                     "to the audience) and Y (lateral, informational only) directly. Delay is derived, not "
-                     "typed — the rearmost placed sub (smallest X) is the 0 ms reference, same plane-wave-"
-                     "towards-the-audience logic as End-Fire, generalised to free 2D placement. Gain trim and "
-                     "Polarity stay directly editable.",
+            TOPO_MANUAL: self._manual_note_text(),
         }
         self.note.config(text=notes[topo])
 
@@ -1737,6 +1966,11 @@ class App(tk.Tk):
         self._on_topology_change()
 
     def _on_change(self, *_):
+        if self.topology.get() == TOPO_MANUAL:
+            # X/Y convention can flip which column is depth without a topology
+            # change firing (no _on_topology_change(), which would blow away
+            # typed manual positions) -- keep the note's column letters in sync.
+            self.note.config(text=self._manual_note_text())
         self._update_speed_of_sound()
         self._sync_group_distance_from_delay()
         self._refresh_unit_displays()
@@ -1798,6 +2032,9 @@ class App(tk.Tk):
             self.row_optimum_label.config(
                 text=f"optimum row spacing (¼λ): {row_opt:.3f} m" if row_opt else "optimum row spacing: -")
 
+        if self.topology.get() in STEER_TOPOLOGIES:
+            self.grating_lobe_label.config(text=self._grating_lobe_text())
+
     def _ellipse_depth_scale(self) -> float:
         """1.0 (a plain circle) unless the active topology is
         Ellipse-capable and Shape = Ellipse is actually selected --
@@ -1813,7 +2050,8 @@ class App(tk.Tk):
             if topo == TOPO_END_FIRE:
                 return end_fire(self.count.get(), self.spacing.get(), self._speed_of_sound(), trims)
             if topo == TOPO_GRADIENT:
-                return gradient_cardioid(self.count.get(), self.spacing.get(), self._speed_of_sound(), trims)
+                return gradient_cardioid(self.count.get(), self.spacing.get(), self._speed_of_sound(), trims,
+                                          self.gradient_alpha.get())
             if topo == TOPO_ARC:
                 return arc_steering(self.count.get(), self.spacing.get(), self.angle.get(), self._speed_of_sound(),
                                      trims, self.steer.get(), self._ellipse_depth_scale())
@@ -1826,7 +2064,7 @@ class App(tk.Tk):
             if topo == TOPO_GRAD_ARC_HYBRID:
                 return gradient_arc_hybrid(self.count.get(), self.spacing.get(), self.row_spacing.get(),
                                             self.angle.get(), self._speed_of_sound(), trims, self.steer.get(),
-                                            self._ellipse_depth_scale())
+                                            self._ellipse_depth_scale(), self.gradient_alpha.get())
             if topo == TOPO_PROGRESSIVE:
                 # Every element is still exactly Radius from one center of
                 # curvature (see progressive_arc_layout) -- same physics as
@@ -1838,10 +2076,10 @@ class App(tk.Tk):
                                     self._speed_of_sound(), trims)
             if topo == TOPO_MANUAL:
                 n = self.count.get()
-                xs = [v.get() for v in self.manual_x_vars]
+                depths = [v.get() for v in self._manual_depth_vars()]
                 gains = [v.get() for v in self.manual_gain_vars]
                 pols = [v.get() for v in self.manual_pol_vars]
-                delays = delays_from_depth(xs, self._speed_of_sound())
+                delays = delays_from_depth(depths, self._speed_of_sound())
                 return manual(n, delays, gains, pols)
         except (tk.TclError, ValueError):
             return []
@@ -1853,7 +2091,7 @@ class App(tk.Tk):
             return [lateral for _, lateral, _ in self._compute_physical_layout()]
         if topo == TOPO_MANUAL:
             try:
-                return [v.get() for v in self.manual_y_vars]
+                return [v.get() for v in self._manual_lateral_vars()]
             except tk.TclError:
                 return []
         try:
@@ -1884,7 +2122,8 @@ class App(tk.Tk):
         topo = self.topology.get()
         if topo == TOPO_MANUAL:
             try:
-                return [(x.get(), y.get(), 0.0) for x, y in zip(self.manual_x_vars, self.manual_y_vars)]
+                return [(d.get(), l.get(), 0.0)
+                        for d, l in zip(self._manual_depth_vars(), self._manual_lateral_vars())]
             except tk.TclError:
                 return [(0.0, 0.0, 0.0)] * n
         if topo in ARC_HYBRID_TOPOLOGIES:
@@ -1921,17 +2160,21 @@ class App(tk.Tk):
 
         # Manual's Y/X are live Entries bound to manual_y_vars/manual_x_vars --
         # they already show exactly what was typed, no push update needed
-        # (and .config(text=...) on an Entry would raise anyway).
+        # (and .config(text=...) on an Entry would raise anyway). Which label
+        # list gets depth vs lateral depends on the X/Y convention (d&b:
+        # X = depth, Y = lateral; L-Acoustics: swapped).
+        depth_labels = self.x_labels if self._dnb_mode() else self.y_labels
+        lateral_labels = self.y_labels if self._dnb_mode() else self.x_labels
         if not is_manual:
             positions = self._compute_positions()
-            for i, y in enumerate(positions):
-                if i < len(self.y_labels):
-                    self.y_labels[i].config(text=f"{y:.2f}")
+            for i, lateral in enumerate(positions):
+                if i < len(lateral_labels):
+                    lateral_labels[i].config(text=f"{lateral:.2f}")
 
         layout = self._compute_physical_layout()
         for i, (depth, _lateral, rotation) in enumerate(layout):
-            if not is_manual and i < len(self.x_labels):
-                self.x_labels[i].config(text=f"{depth:.2f}")
+            if not is_manual and i < len(depth_labels):
+                depth_labels[i].config(text=f"{depth:.2f}")
             if i < len(self.rotation_labels):
                 self.rotation_labels[i].config(text=f"{rotation:.1f}")
 
