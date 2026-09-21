@@ -129,6 +129,11 @@ def build_project_dict(app) -> dict:
             "mains_delay_ms": app.align_mains_delay.get(),
             "sub_distance_m": app.align_sub_distance.get(),
         },
+        "floor_bounce": {
+            "source_height_m": app.bounce_source_height.get(),
+            "mic_distance_m": app.bounce_mic_distance.get(),
+            "mic_height_m": app.bounce_mic_height.get(),
+        },
         "osc": {
             "host": app.osc_host.get(),
             "port": app.osc_port.get(),
@@ -240,9 +245,15 @@ def apply_project_dict(app, data: dict) -> list[str]:
     app.topology.set(topo_label)
 
     try:
-        app.count.set(int(array.get("count", app.count.get())))
+        raw_count = int(array.get("count", app.count.get()))
     except (TypeError, ValueError):
         warnings.append("Invalid sub count -- kept current value.")
+    else:
+        from sad_realtime_osc import MAX_SUBS_SPATIAL
+        clamped_count = max(1, min(MAX_SUBS_SPATIAL, raw_count))
+        app.count.set(clamped_count)
+        if clamped_count != raw_count:
+            warnings.append(f"'count' out of range -- clamped to {clamped_count}.")
 
     for var, key, lo, hi in (
         (app.spacing, "spacing_m", 0.001, 100000.0),
@@ -455,6 +466,18 @@ def apply_project_dict(app, data: dict) -> list[str]:
                 var.set(float(align[key]))
             except (TypeError, ValueError):
                 warnings.append(f"Invalid alignment wizard '{key}' -- kept current value.")
+
+    bounce = section("floor_bounce")
+    for var, key in (
+        (app.bounce_source_height, "source_height_m"),
+        (app.bounce_mic_distance, "mic_distance_m"),
+        (app.bounce_mic_height, "mic_height_m"),
+    ):
+        if key in bounce:
+            value, clamped = _clamp(bounce[key], 0.0, 100000.0, var.get())
+            var.set(value)
+            if clamped:
+                warnings.append(f"Floor bounce '{key}' out of range -- clamped.")
 
     osc = section("osc")
     if "host" in osc:

@@ -24,6 +24,13 @@ freeware calculator -- only its public interface was ever looked at
 (its own calculation engine is deliberately hidden/password-protected
 by its author), so the actual math here is this app's own derivation,
 not a reimplementation. See README.md's Credits section.
+
+floor_bounce is a direct port of Merlijn van Veen's floor_bounce_V1.1.xlsx
+(Copyright 2014 Merlijn van Veen, All Rights Reserved,
+https://www.merlijnvanveen.nl/) -- a single-source-to-single-point
+ground-reflection comb filter calculation, unrelated to this file's own
+multi-element array-steering math. See README.md's Credits section and
+floor_bounce's own docstring.
 """
 from dataclasses import dataclass
 import cmath
@@ -1242,3 +1249,68 @@ def taper_power_loss_db(gain_trim_db: list[float]) -> float:
     if mean_lin <= 0:
         return float("-inf")
     return 10.0 * math.log10(mean_lin)
+
+
+@dataclass
+class FloorBounceResult:
+    direct_path_m: float
+    bounce_path_m: float
+    path_diff_m: float
+    time_diff_ms: float
+    peak_hz: float = None
+    null_hz: float = None
+    bounce_level_db: float = None
+
+
+def floor_bounce(source_height_m: float, mic_distance_m: float, mic_height_m: float,
+                  speed_mps: float) -> FloorBounceResult:
+    """Ground/floor-bounce comb filter: a single source's direct sound to a
+    listening position (e.g. a FOH mic) interferes with the same sound
+    reflected once off the flat floor between them. A standalone,
+    single-source-to-single-point calculation -- unrelated to this app's
+    own array-steering math (End-Fire/Arc/Focus/Avoid Point etc. all
+    combine multiple *elements*; this combines one element with its own
+    floor reflection) -- ported from Merlijn van Veen's
+    floor_bounce_V1.1.xlsx (Copyright 2014 Merlijn van Veen, All Rights
+    Reserved, merlijnvanveen.nl), using the mirror-image method: the
+    reflection is equivalent to a straight line from an image source at
+    -source_height_m to the mic, crossing the floor at the specular
+    reflection point.
+
+    source_height_m and mic_height_m are both heights above the same flat
+    floor; mic_distance_m is the horizontal distance between source and
+    mic. Returns path lengths/difference always; peak_hz/null_hz/
+    bounce_level_db are None when source and mic are both at floor level
+    (source_height_m + mic_height_m <= 0) -- the reflection point then
+    coincides with the source itself, so bounce and direct paths are
+    identical (no comb filter, not a divide-by-zero to hide).
+
+    peak_hz is where the path difference equals one whole wavelength
+    (comb-filter reinforcement repeats every peak_hz above that);
+    null_hz = peak_hz/2 is the lowest, deepest null -- where the path
+    difference is half a wavelength and the two arrivals are fully out of
+    phase -- the single frequency most engineers mean by "the floor bounce
+    null". bounce_level_db is the reflected path's level relative to the
+    direct path from 1/r spreading alone (not floor absorption, which
+    the source spreadsheet doesn't model either) -- how deep that null
+    can actually go if the two paths were perfectly out of phase; 0 dB
+    would be a fully reflective floor and an ideal null."""
+    if source_height_m < 0 or mic_height_m < 0 or mic_distance_m < 0:
+        raise ValueError("heights and distance must be >= 0")
+
+    height_sum = source_height_m + mic_height_m
+    x1 = mic_distance_m * source_height_m / height_sum if height_sum > 0 else 0.0
+    x2 = mic_distance_m - x1
+
+    direct = math.hypot(mic_distance_m, source_height_m - mic_height_m)
+    bounce = math.hypot(x1, source_height_m) + math.hypot(x2, mic_height_m)
+    diff = bounce - direct
+
+    if diff <= 0:
+        return FloorBounceResult(direct, bounce, diff, 0.0)
+
+    time_diff_ms = diff / speed_mps * 1000.0
+    peak_hz = 1000.0 / time_diff_ms
+    null_hz = peak_hz / 2.0
+    bounce_level_db = 20.0 * math.log10(direct / bounce) if bounce > 0 else 0.0
+    return FloorBounceResult(direct, bounce, diff, time_diff_ms, peak_hz, null_hz, bounce_level_db)

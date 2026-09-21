@@ -3,6 +3,92 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.9.2] - 2026-09-21
+Changed: renamed the **Live** tab to **Design**, and split the three-tab
+layout (Live / OSC / Setup) into four: **Design** (Array, Topology
+options, Level taper, Sub bandwidth, Info, the per-sub table), **Setup**
+(Units, DSP clock, Environment, Venue → arc, Sub box dimensions --
+venue/system parameters), **Alignment** (Group, Pre-alignment delay
+lookup, Sub → tops alignment wizard, Floor bounce null -- the
+calibration tasks done once per show, previously mixed into Setup), and
+**OSC** (unchanged, now last since it's touched far less often than
+Design). Tab order is now Design / Setup / Alignment / OSC.
+
+Fixed: the per-sub table stayed pinned to its row-count-derived size when
+the window was enlarged by hand, leaving the extra room as blank
+scrollable canvas below it instead of the table using it.
+`_build_scroll_tab`'s canvas now stretches its embedded content frame's
+height to match whenever the canvas itself is given more room than the
+content naturally needs (manual resize), letting the table's existing
+`fill="both", expand=True` pack absorb the extra space -- same mechanism
+already used for the horizontal stretch, generalized to vertical. Only
+ever grows content, never shrinks it below its natural height, so
+scrolling still kicks in normally when the window is smaller than the
+content needs.
+
+## [0.9.1] - 2026-09-21
+Changed: split OSC output out of the Live tab into its own **OSC** tab
+(Live / OSC / Setup), rather than sharing Live with Array/Topology
+options/Level taper/Sub bandwidth/Info/the per-sub table. OSC output is
+reached for constantly during a show same as everything else in the old
+Live tab, but doesn't need to compete with the per-sub table for space --
+the table is the thing you actually watch while running the show.
+`_fit_window_height`'s per-tab canvas sizing (added in 0.9.0) generalizes
+to a third tab with no other change needed. Bumped the per-sub table's
+scroll cap (`_TABLE_MAX_HEIGHT_PX`) 320 -> 480px, showing more rows
+before it needs to scroll now that it's not sharing the tab with OSC
+output.
+
+Fixed: the window's minimum height floor was a flat 400px, left over
+from when there was only ever one view to size. With three independently-
+sized tabs, that floor forced ~150-250px of dead space under a
+genuinely short tab (OSC output alone only needs about 150px). Dropped
+to `_MIN_WINDOW_HEIGHT = 200`.
+
+## [0.9.0] - 2026-09-21
+Fixed: the window could request a size taller than the physical screen,
+with no cap and no scrollbar to recover the clipped part --
+`_fit_window_height` sized purely from its own requested size
+(`winfo_reqwidth`/`reqheight`), never checking `winfo_screenwidth`/
+`winfo_screenheight`. On Gradient Arc Hybrid (worst case: 14 stacked
+topology-option rows) this reliably overflowed a 1080p display, and
+since neither column scrolled, Windows just clipped the bottom --
+usually the OSC output panel and/or the tail of the per-sub table, i.e.
+the two things most likely to matter mid-show. `_fit_window_height` now
+clamps both the window and each tab's content to the real screen size,
+falling back to scrolling (same Canvas+Scrollbar pattern the per-sub
+table already used) for whatever doesn't fit.
+
+Changed: split the old two-column layout (left column always-visible,
+right column always-visible) into a **Live** / **Setup** notebook tab.
+Live holds what you touch while working a show (Array, OSC output,
+Topology options, Level taper, Sub bandwidth, Info, the per-sub table);
+Setup holds the panels configured once per show (Units, DSP clock,
+Environment, Venue → arc, Sub box dimensions, Group, Pre-alignment,
+Sub → tops alignment wizard, Floor bounce null). Previously both were
+stacked/side-by-side and always on screen at once, which is most of why
+the window overflowed 1080p in the first place. Also moved OSC output
+from dead last in the build order to right under Array -- it's the
+single most operationally critical control during a show and doesn't
+belong buried under Topology options/Level taper/Sub bandwidth/Info/the
+whole per-sub table.
+
+Changed: added Windows per-monitor DPI-awareness
+(`SetProcessDpiAwareness`, falling back to the older
+`SetProcessDPIAware` on Windows 7/8) so a scaled display (125%/150%,
+common on laptops) doesn't compound the screen-size budget above with an
+extra layer of OS bitmap-upscaling. No-op on non-Windows platforms.
+
+Changed: centralized the field/panel padding that used to be a bare
+`padx=5, pady=5` / `padx=10, pady=5` literal repeated at over a hundred
+call sites into `FIELD_PAD_X`/`FIELD_PAD_Y`/`PANEL_PAD_X`/`PANEL_PAD_Y`,
+tightened slightly to reduce the vertical footprint. Converted the
+always-visible per-topology explanatory paragraph (previously a wrapped
+label below the per-sub table) into a hover tooltip next to the Topology
+dropdown, using the same `_help_icon` pattern every other explanatory
+text in this app already uses, instead of permanently eating vertical
+space.
+
 ## [0.8.2] - 2026-09-20
 Fixed: **End-Fire** and **Gradient / Cardioid Pairs** showed their
 computed spread position in the wrong per-sub table column under the X/Y

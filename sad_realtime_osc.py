@@ -24,8 +24,9 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.8.2"
+__version__ = "0.9.2"
 
+import ctypes
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -43,11 +44,11 @@ from array_math import (
     gradient_null_angle_deg, alpha_from_null_angle_deg,
     freq_at_wavelength_fraction, spacing_at_wavelength_fraction, grating_lobe_max_spacing_m,
     far_from_venue, arc_from_far, sub_positions, sub_positions_gradient, sub_positions_centered, array_length,
-    gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db,
+    gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db, GAIN_OSC_FLOOR_DB,
     delay_ms_for_distance, distance_for_delay_ms, delay_samples, speed_of_sound,
     required_group_delay_ms, spacing_clearance_m,
     LEVEL_TAPER_WINDOWS, PARAMETRIC_TAPER_WINDOWS, level_taper_db, arc_steered_aim_index,
-    taper_onaxis_loss_db, taper_power_loss_db,
+    taper_onaxis_loss_db, taper_power_loss_db, floor_bounce,
 )
 from sub_profiles import load_profiles
 from prealign_profiles import (
@@ -159,7 +160,33 @@ MAX_SUBS = 12
 MAX_SUBS_SPATIAL = 48
 
 _TABLE_ROW_HEIGHT_PX = 28
-_TABLE_MAX_HEIGHT_PX = 320
+_TABLE_MAX_HEIGHT_PX = 480
+
+# Compact spacing scale -- centralizes what used to be a bare literal
+# (padx=FIELD_PAD_X, pady=FIELD_PAD_Y for fields; padx=PANEL_PAD_X, pady=PANEL_PAD_Y for panels) repeated at every
+# call site, tightened to reduce the vertical footprint enough that the
+# primary tab's content fits a 1080p screen without scrolling in the common
+# case (see _fit_window_height).
+FIELD_PAD_X = 4
+FIELD_PAD_Y = 2
+PANEL_PAD_X = 8
+PANEL_PAD_Y = 4
+
+# Screen-fit margins for _fit_window_height. _SCREEN_MARGIN_* bound each
+# tab's scroll canvas to what the display can actually show, leaving room
+# for the notebook's tab strip and the footer credit lines below it;
+# _WINDOW_CHROME_MARGIN is the final, smaller safety cap on the whole
+# window (titlebar + taskbar only) so it's never taller than the screen
+# even if the margin estimate above runs a little tight.
+_SCREEN_MARGIN_W = 80
+_SCREEN_MARGIN_H = 160
+_WINDOW_CHROME_MARGIN = 80
+
+# Floor on the window's own height -- deliberately small now that each tab
+# sizes independently (the OSC tab's content alone is only ~150px tall);
+# a large floor here would force wasted blank space under it, same as the
+# overflow bug this whole file forces the window to avoid at the other end.
+_MIN_WINDOW_HEIGHT = 200
 
 
 class Tooltip:
@@ -199,6 +226,7 @@ class App(tk.Tk):
 
         self.osc_client = None
         self._last_sent = {}
+        self._last_sent_indices = set()
         self.trim_vars = []
         self.manual_x_vars = []
         self.manual_y_vars = []
@@ -216,14 +244,18 @@ class App(tk.Tk):
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0)
 
-        self.left_col = ttk.Frame(self)
-        self.left_col.grid(row=0, column=0, sticky="nsew")
-        self.right_col = ttk.Frame(self)
-        self.right_col.grid(row=0, column=1, sticky="new")
+        self.notebook = ttk.Notebook(self)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+        self.notebook.bind("<<NotebookTabChanged>>", self._fit_window_height)
 
-        # left column: primary/frequently-used controls + the per-sub table
+        self.left_col, self.live_canvas = self._build_scroll_tab("Design")
+        self.right_col, self.setup_canvas = self._build_scroll_tab("Setup")
+        self.alignment_col, self.alignment_canvas = self._build_scroll_tab("Alignment")
+        self.osc_col, self.osc_canvas = self._build_scroll_tab("OSC")
+
+        # Design tab: primary/frequently-used controls + the per-sub table,
+        # which gets the most room now that OSC output has its own tab.
         self._build_project_panel()
         self._build_controls()
         self._build_topology_options_panel()
@@ -231,57 +263,140 @@ class App(tk.Tk):
         self._build_bandwidth_panel()
         self._build_info_panel()
         self._build_table()
-        self._build_osc_panel()
 
-        # right column: setup-once / ancillary panels
+        # Setup tab: venue/system parameters configured once per show and
+        # rarely touched again.
         self._build_units_panel()
         self._build_clock_panel()
         self._build_environment_panel()
         self._build_venue_panel()
         self._build_dimensions_panel()
+
+        # Alignment tab: the calibration/alignment tasks done once per show
+        # (group trim, pre-alignment lookup, sub-to-tops wizard, floor
+        # bounce null) -- distinct from Setup's venue/system parameters.
         self._build_group_panel()
         self._build_prealign_panel()
         self._build_alignment_panel()
+        self._build_floor_bounce_panel()
+
+        # OSC tab: on its own since it's reached for the whole show, not
+        # just once -- doesn't need to compete with the table for room.
+        # Last tab since it's touched far less often than Design.
+        self._build_osc_panel()
 
         ttk.Label(self, text="Array math from Merlijn van Veen's S.A.D. (Subwoofer Array Designer) — "
                               "merlijnvanveen.nl", foreground="#888", font=("Segoe UI", 8)).grid(
-            row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 0))
+            row=1, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 0))
         ttk.Label(self, text="S.A.D. Realtime — freekieaudio.uk", foreground="#888",
                   font=("Segoe UI", 8)).grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
+            row=2, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 4))
         ttk.Label(self, text="100% vibe coded — use at your own risk, check all calculations before use.",
                   foreground="#a03030", font=("Segoe UI", 8, "bold")).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
+            row=3, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 6))
 
         self._on_topology_change()
         self._update_venue_far()
         self._fit_window_height()
+        # ttk widget metrics (e.g. the OSC panel's Host/Port/Address prefix
+        # row) aren't always fully realized until after the first pass
+        # through the event loop -- a single synchronous fit here can
+        # undersize the canvas width and clip that row. One settle pass
+        # once Tk is idle catches it with accurate measurements.
+        self.after_idle(self._fit_window_height)
 
-    def _fit_window_height(self):
+    def _build_scroll_tab(self, title):
+        """Adds a Notebook tab titled `title` containing a Canvas+Scrollbar
+        (same pattern as the per-sub table's own scroll region), and returns
+        (content_frame, canvas) -- panels are built into content_frame
+        exactly as before; _fit_window_height() caps canvas's size to what
+        the screen can actually show so a tall panel set scrolls instead of
+        being silently clipped by Windows."""
+        outer = ttk.Frame(self.notebook)
+        self.notebook.add(outer, text=title)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        content = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_canvas_configure(e):
+            # Stretch content to at least fill the canvas -- lets whichever
+            # child packs with fill="both", expand=True (the per-sub table,
+            # in the Design tab) grow into extra room when the user enlarges
+            # the window by hand, instead of the table staying pinned to its
+            # row-count-derived size while blank canvas grows below it.
+            # max(...) only ever grows content, never shrinks it below its
+            # own natural height, so scrolling still kicks in normally when
+            # the canvas is smaller than the content needs.
+            canvas.itemconfig(window_id, width=e.width, height=max(e.height, content.winfo_reqheight()))
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        return content, canvas
+
+    def _fit_window_height(self, _event=None):
+        """Caps every tab's scroll canvas -- and then the window itself --
+        to what the physical screen can show (winfo_screenheight/width),
+        instead of the old unconditional fit-to-content, which could (and
+        on Gradient Arc Hybrid's 14 topology-option rows, reliably did)
+        request a window taller than a 1080p display with no scrollbar to
+        recover the clipped part. Explicit Notebook width/height (rather
+        than its own default of "max across every tab") keeps the visible
+        tab's own content driving the window size, not whichever tab
+        happens to be tallest."""
         self.update_idletasks()
-        width = max(self.winfo_width(), self.winfo_reqwidth())
-        height = max(self.winfo_reqheight(), 400)
+        avail_w = max(self.winfo_screenwidth() - _SCREEN_MARGIN_W, 600)
+        avail_h = max(self.winfo_screenheight() - _SCREEN_MARGIN_H, 300)
+
+        # Order must match tab order (Design, Setup, Alignment, OSC) since
+        # `sizes[active]` below is looked up by tab index.
+        sizes = []
+        for canvas, content in ((self.live_canvas, self.left_col), (self.setup_canvas, self.right_col),
+                                 (self.alignment_canvas, self.alignment_col), (self.osc_canvas, self.osc_col)):
+            w = min(content.winfo_reqwidth(), avail_w)
+            h = min(content.winfo_reqheight(), avail_h)
+            canvas.configure(width=w, height=h)
+            sizes.append((w, h))
+
+        active = self.notebook.index(self.notebook.select()) if self.notebook.tabs() else 0
+        self.notebook.configure(width=sizes[active][0], height=sizes[active][1])
+
+        self.update_idletasks()
+        width = min(max(self.winfo_width(), self.winfo_reqwidth()),
+                    self.winfo_screenwidth() - _WINDOW_CHROME_MARGIN)
+        height = min(max(self.winfo_reqheight(), _MIN_WINDOW_HEIGHT),
+                     self.winfo_screenheight() - _WINDOW_CHROME_MARGIN)
         self.geometry(f"{width}x{height}")
-        self.minsize(self.winfo_reqwidth(), 400)
+        self.minsize(min(self.winfo_reqwidth(), width), _MIN_WINDOW_HEIGHT)
 
     # -------------------------------------------------------------- project --
     def _build_project_panel(self):
         frm = ttk.LabelFrame(self.left_col, text="Project")
-        frm.pack(fill="x", padx=10, pady=(10, 5))
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=(PANEL_PAD_Y * 2, PANEL_PAD_Y))
 
-        ttk.Label(frm, text="Name / notes").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Name / notes").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         name_entry = ttk.Entry(frm, textvariable=self.project_name, width=32)
-        name_entry.grid(row=0, column=1, columnspan=3, sticky="we", padx=5, pady=5)
+        name_entry.grid(row=0, column=1, columnspan=3, sticky="we", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
-        ttk.Button(frm, text="New", command=self._new_project).grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Button(frm, text="Save", command=self._save_project).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(frm, text="New", command=self._new_project).grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        ttk.Button(frm, text="Save", command=self._save_project).grid(row=1, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Save As...", command=self._save_project_as).grid(
-            row=1, column=2, sticky="w", padx=5, pady=5)
+            row=1, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Load...", command=self._load_project).grid(
-            row=1, column=3, sticky="w", padx=5, pady=5)
+            row=1, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         ttk.Label(frm, textvariable=self.project_status_var, foreground="#666").grid(
-            row=1, column=4, sticky="w", padx=5, pady=5)
+            row=1, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=0, col=4,
                          text=f"Saves every setting on this screen -- topology, spacing, environment, group, "
@@ -357,32 +472,38 @@ class App(tk.Tk):
     # ---------------------------------------------------------- controls --
     def _build_controls(self):
         frm = ttk.LabelFrame(self.left_col, text="Array")
-        frm.pack(fill="x", padx=10, pady=(10, 5))
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=(PANEL_PAD_Y * 2, PANEL_PAD_Y))
 
-        ttk.Label(frm, text="Topology").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Topology").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.topology = tk.StringVar(value=TOPO_ARC)
         cb = ttk.Combobox(frm, textvariable=self.topology, values=TOPOLOGIES, state="readonly", width=26)
-        cb.grid(row=0, column=1, columnspan=3, sticky="w", padx=5, pady=5)
+        cb.grid(row=0, column=1, columnspan=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         cb.bind("<<ComboboxSelected>>", lambda e: self._on_topology_change())
+        # What used to be a permanent wrapped paragraph below the per-sub
+        # table (self.note) is now this topology's hover tooltip instead --
+        # same _help_icon pattern already used for every other explanatory
+        # text in this app, text refreshed per topology in
+        # _on_topology_change/_on_change.
+        self.topology_note_icon = self._help_icon(frm, row=0, col=4, text="")
 
         self.count_label = ttk.Label(frm, text="Subs")
-        self.count_label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.count_label.grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.count = tk.IntVar(value=6)
         self.count_spin = ttk.Spinbox(frm, from_=1, to=MAX_SUBS, textvariable=self.count, width=5,
                                        command=self._on_count_change)
-        self.count_spin.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        self.count_spin.grid(row=1, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.count_spin.bind("<Return>", lambda e: self._on_count_change())
         self.count_spin.bind("<FocusOut>", lambda e: self._on_count_change())
 
         self.spacing_label = ttk.Label(frm, text="Spacing")
-        self.spacing_label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        self.spacing_label.grid(row=2, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.spacing = tk.DoubleVar(value=1.4)
         self.spacing_spin = self._make_length_field(frm, self.spacing, row=2, col=1)
         self.spacing_slider = ttk.Scale(frm, from_=0.1, to=5.0, orient="horizontal", variable=self.spacing,
                                          command=self._on_spacing_slider)
-        self.spacing_slider.grid(row=2, column=2, sticky="ew", padx=5, pady=5)
+        self.spacing_slider.grid(row=2, column=2, sticky="ew", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.wavelength_label = ttk.Label(frm, text="", width=16)
-        self.wavelength_label.grid(row=2, column=3, sticky="w", padx=5, pady=5)
+        self.wavelength_label.grid(row=2, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         frm.grid_columnconfigure(2, weight=1)
 
@@ -395,18 +516,18 @@ class App(tk.Tk):
         topology like Gradient Arc Hybrid stacked nine unrelated rows into
         one "Array" box."""
         frm = ttk.LabelFrame(self.left_col, text="Topology options")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
         self.topology_options_frame = frm
 
         self.row_spacing_label = ttk.Label(frm, text="Row spacing")
-        self.row_spacing_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.row_spacing_label.grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.row_spacing = tk.DoubleVar(value=0.7)
         self.row_spacing_spin = self._make_length_field(frm, self.row_spacing, row=0, col=1)
         self.row_spacing_slider = ttk.Scale(frm, from_=0.1, to=5.0, orient="horizontal", variable=self.row_spacing,
                                              command=self._on_row_spacing_slider)
-        self.row_spacing_slider.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
+        self.row_spacing_slider.grid(row=0, column=2, sticky="ew", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.row_wavelength_label = ttk.Label(frm, text="", width=16)
-        self.row_wavelength_label.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.row_wavelength_label.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.row_spacing_help = self._help_icon(
             frm, row=0, col=4,
             text="Front-to-back spacing within each column, for the two Arc Hybrid "
@@ -421,10 +542,10 @@ class App(tk.Tk):
             frm, "Arc (°)", self.angle, 0.0, 180.0, row=1, increment=1.0, decimals=1)
 
         self.far_label = ttk.Label(frm, text="FAR: -", width=12)
-        self.far_label.grid(row=1, column=3, sticky="w", padx=5, pady=5)
+        self.far_label.grid(row=1, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.radius_label = ttk.Label(frm, text="Radius")
-        self.radius_label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        self.radius_label.grid(row=2, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.radius = tk.DoubleVar(value=2.0)
         self.radius_spin = self._make_length_field(frm, self.radius, row=2, col=1)
 
@@ -439,11 +560,11 @@ class App(tk.Tk):
                  "default symmetric aim, straight ahead.")
 
         self.shape_label = ttk.Label(frm, text="Shape")
-        self.shape_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
+        self.shape_label.grid(row=4, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.shape = tk.StringVar(value=SHAPE_CIRCLE)
         self.shape_cb = ttk.Combobox(frm, textvariable=self.shape, values=PHYSICAL_SHAPES,
                                       state="readonly", width=10)
-        self.shape_cb.grid(row=4, column=1, sticky="w", padx=5, pady=5)
+        self.shape_cb.grid(row=4, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.shape_cb.bind("<<ComboboxSelected>>", lambda e: self._on_shape_change())
 
         self.ellipse_ratio = tk.DoubleVar(value=1.0)
@@ -481,12 +602,12 @@ class App(tk.Tk):
                  "verify it against.")
 
         self.focus_x_label = ttk.Label(frm, text="Focus X")
-        self.focus_x_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
+        self.focus_x_label.grid(row=7, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.focus_x = tk.DoubleVar(value=10.0)
         self.focus_x_spin = self._make_length_field(frm, self.focus_x, row=7, col=1)
 
         self.focus_y_label = ttk.Label(frm, text="Focus Y")
-        self.focus_y_label.grid(row=8, column=0, sticky="w", padx=5, pady=5)
+        self.focus_y_label.grid(row=8, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.focus_y = tk.DoubleVar(value=0.0)
         self.focus_y_spin = self._make_length_field(frm, self.focus_y, row=8, col=1)
         self.focus_help = self._help_icon(
@@ -499,12 +620,12 @@ class App(tk.Tk):
                  "-- this app's own extension, not a S.A.D. topology.")
 
         self.avoid_x_label = ttk.Label(frm, text="Avoid X")
-        self.avoid_x_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+        self.avoid_x_label.grid(row=9, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.avoid_x = tk.DoubleVar(value=10.0)
         self.avoid_x_spin = self._make_length_field(frm, self.avoid_x, row=9, col=1)
 
         self.avoid_y_label = ttk.Label(frm, text="Avoid Y")
-        self.avoid_y_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+        self.avoid_y_label.grid(row=10, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.avoid_y = tk.DoubleVar(value=0.0)
         self.avoid_y_spin = self._make_length_field(frm, self.avoid_y, row=10, col=1)
         self.avoid_help = self._help_icon(
@@ -525,12 +646,12 @@ class App(tk.Tk):
                  "cross-check a noise-sensitive application against measurement.")
 
         self.pattern_label = ttk.Label(frm, text="Pattern")
-        self.pattern_label.grid(row=11, column=0, sticky="w", padx=5, pady=5)
+        self.pattern_label.grid(row=11, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.gradient_pattern = tk.StringVar(value="Cardioid")
         self.pattern_cb = ttk.Combobox(frm, textvariable=self.gradient_pattern,
                                         values=GRADIENT_PATTERNS + [CUSTOM_PROFILE],
                                         state="readonly", width=13)
-        self.pattern_cb.grid(row=11, column=1, sticky="w", padx=5, pady=5)
+        self.pattern_cb.grid(row=11, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.pattern_cb.bind("<<ComboboxSelected>>", self._on_gradient_pattern_change)
 
         self.gradient_alpha = tk.DoubleVar(value=0.5)
@@ -600,7 +721,7 @@ class App(tk.Tk):
     def _labeled_slider(self, parent, text, var, lo, hi, row, increment=0.1, decimals=None,
                          on_commit=None):
         label = ttk.Label(parent, text=text)
-        label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+        label.grid(row=row, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         commit = on_commit or self._on_change
 
         def quantize():
@@ -613,7 +734,7 @@ class App(tk.Tk):
 
         spin = ttk.Spinbox(parent, from_=lo, to=hi, increment=increment, textvariable=var, width=8,
                             command=quantize)
-        spin.grid(row=row, column=1, sticky="w", padx=5, pady=5)
+        spin.grid(row=row, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         spin.bind("<Return>", lambda e: quantize())
         spin.bind("<FocusOut>", lambda e: quantize())
 
@@ -627,7 +748,7 @@ class App(tk.Tk):
 
         slider = ttk.Scale(parent, from_=lo, to=hi, orient="horizontal", variable=var,
                             command=on_slide)
-        slider.grid(row=row, column=2, sticky="ew", padx=5, pady=5)
+        slider.grid(row=row, column=2, sticky="ew", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         return label, spin, slider
 
     def _on_gradient_pattern_change(self, *_):
@@ -696,41 +817,44 @@ class App(tk.Tk):
 
     def _help_icon(self, parent, row, col, text, columnspan=1):
         """A small '?' that shows `text` as a tooltip on hover, instead of
-        a permanent wrapped paragraph eating vertical space."""
+        a permanent wrapped paragraph eating vertical space. The Tooltip
+        instance is stashed on the label (`.tooltip`) so callers whose help
+        text changes at runtime (e.g. the per-topology note) can update
+        `lbl.tooltip.text` instead of rebuilding the icon."""
         lbl = ttk.Label(parent, text=" ? ", foreground="#666", relief="ridge", borderwidth=1,
                          cursor="question_arrow")
-        lbl.grid(row=row, column=col, columnspan=columnspan, sticky="w", padx=5, pady=5)
-        Tooltip(lbl, text)
+        lbl.grid(row=row, column=col, columnspan=columnspan, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        lbl.tooltip = Tooltip(lbl, text)
         return lbl
 
     # --------------------------------------------------------------- taper --
     def _build_taper_panel(self):
         frm = ttk.LabelFrame(self.left_col, text="Level taper (Arc / Physical / Progressive / Hybrids only)")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
         self.taper_frame = frm
 
-        ttk.Label(frm, text="Window").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Window").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.taper_window = tk.StringVar(value=LEVEL_TAPER_WINDOWS[0])
         window_cb = ttk.Combobox(frm, textvariable=self.taper_window, values=LEVEL_TAPER_WINDOWS,
                                   state="readonly", width=10)
-        window_cb.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        window_cb.grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         window_cb.bind("<<ComboboxSelected>>", lambda e: self._on_taper_window_change())
 
         self.atten_label = ttk.Label(frm, text="Max atten (dB)")
-        self.atten_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.atten_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.taper_max_atten = tk.DoubleVar(value=0.0)
         self.atten_spin = ttk.Spinbox(frm, from_=0.0, to=30.0, increment=0.5,
                                        textvariable=self.taper_max_atten, width=6, command=self._on_change)
-        self.atten_spin.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.atten_spin.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.atten_spin.bind("<Return>", lambda e: self._on_change())
         self.atten_spin.bind("<FocusOut>", lambda e: self._on_change())
 
         self.sidelobe_label = ttk.Label(frm, text="Sidelobe (dB)")
-        self.sidelobe_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.sidelobe_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.taper_sidelobe_db = tk.DoubleVar(value=30.0)
         self.sidelobe_spin = ttk.Spinbox(frm, from_=10.0, to=100.0, increment=1.0,
                                           textvariable=self.taper_sidelobe_db, width=6, command=self._on_change)
-        self.sidelobe_spin.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.sidelobe_spin.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.sidelobe_spin.bind("<Return>", lambda e: self._on_change())
         self.sidelobe_spin.bind("<FocusOut>", lambda e: self._on_change())
 
@@ -764,7 +888,7 @@ class App(tk.Tk):
         self._set_widgets_visible((self.atten_label, self.atten_spin), not is_parametric)
 
         self.taper_cost_label = ttk.Label(frm, text="taper cost: -", width=48)
-        self.taper_cost_label.grid(row=1, column=0, columnspan=4, sticky="w", padx=5, pady=5)
+        self.taper_cost_label.grid(row=1, column=0, columnspan=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self._help_icon(
             frm, row=1, col=4,
             text="The real-world price of this taper, not visible in a polar-prediction plot: "
@@ -837,11 +961,11 @@ class App(tk.Tk):
     # --------------------------------------------------------------- units --
     def _build_units_panel(self):
         frm = ttk.LabelFrame(self.right_col, text="Units")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
-        ttk.Label(frm, text="Length unit").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Length unit").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         unit_cb = ttk.Combobox(frm, textvariable=self.unit, values=UNITS, state="readonly", width=6)
-        unit_cb.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        unit_cb.grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         unit_cb.bind("<<ComboboxSelected>>", lambda e: self._on_unit_change())
 
         self._help_icon(frm, row=0, col=2,
@@ -851,11 +975,11 @@ class App(tk.Tk):
                               "and see in those fields. Read-only results (Y column, collision/alignment/FAR "
                               "text) stay in metres.")
 
-        ttk.Label(frm, text="X/Y convention").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="X/Y convention").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.xy_convention = tk.StringVar(value=XY_LACOUSTICS)
         xy_cb = ttk.Combobox(frm, textvariable=self.xy_convention, values=XY_CONVENTIONS,
                               state="readonly", width=14)
-        xy_cb.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        xy_cb.grid(row=1, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         xy_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
 
         self._help_icon(frm, row=1, col=2,
@@ -899,7 +1023,7 @@ class App(tk.Tk):
         switching units rescales the display without touching meters_var."""
         display_var = tk.DoubleVar()
         spin = ttk.Spinbox(parent, textvariable=display_var, width=width, from_=0.0, to=100000.0, increment=1.0)
-        spin.grid(row=row, column=col, sticky="w", padx=5, pady=5)
+        spin.grid(row=row, column=col, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         def commit(*_):
             scale = UNIT_SCALE[self.unit.get()]
@@ -931,21 +1055,21 @@ class App(tk.Tk):
 
     # -------------------------------------------------------------- group --
     def _build_group_panel(self):
-        frm = ttk.LabelFrame(self.right_col, text="Group (applied to all subs)")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm = ttk.LabelFrame(self.alignment_col, text="Group (applied to all subs)")
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         self.group_delay = tk.DoubleVar(value=0.0)
         self._labeled_slider(frm, "Group delay (ms)", self.group_delay, 0.0, 1000.0, row=0, increment=0.1)
 
-        ttk.Label(frm, text="Distance").grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Distance").grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.group_delay_m = tk.DoubleVar(value=0.0)
         self._make_length_field(frm, self.group_delay_m, row=0, col=4, on_commit=self._on_group_distance_change)
 
-        ttk.Label(frm, text="Group polarity").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Group polarity").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.group_polarity = tk.StringVar(value="Normal")
         pol_cb = ttk.Combobox(frm, textvariable=self.group_polarity, values=["Normal", "Inverted"],
                                state="readonly", width=10)
-        pol_cb.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        pol_cb.grid(row=1, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         pol_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
 
         self.group_level = tk.DoubleVar(value=0.0)
@@ -986,8 +1110,8 @@ class App(tk.Tk):
 
     # ---------------------------------------------------- pre-alignment --
     def _build_prealign_panel(self):
-        frm = ttk.LabelFrame(self.right_col, text="Pre-alignment delay lookup")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm = ttk.LabelFrame(self.alignment_col, text="Pre-alignment delay lookup")
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         try:
             self.prealign_entries = load_prealign_entries()
@@ -999,22 +1123,22 @@ class App(tk.Tk):
             # app usable.
             self.prealign_entries = []
             ttk.Label(frm, text=f"⚠ prealign_delays.csv error:\n{e}", foreground="#c33",
-                      wraplength=340, justify="left").pack(fill="x", padx=5, pady=5)
+                      wraplength=340, justify="left").pack(fill="x", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
             return
 
         main_systems = sorted({e[0] for e in self.prealign_entries})
 
-        ttk.Label(frm, text="Main system").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Main system").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.prealign_main = tk.StringVar(value=main_systems[0] if main_systems else "")
         main_cb = ttk.Combobox(frm, textvariable=self.prealign_main, values=main_systems,
                                 state="readonly", width=12)
-        main_cb.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        main_cb.grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         main_cb.bind("<<ComboboxSelected>>", lambda e: self._on_prealign_main_change())
 
-        ttk.Label(frm, text="Sub preset").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Sub preset").grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.prealign_sub = tk.StringVar()
         self.prealign_sub_cb = ttk.Combobox(frm, textvariable=self.prealign_sub, state="readonly", width=18)
-        self.prealign_sub_cb.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.prealign_sub_cb.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.prealign_sub_cb.bind("<<ComboboxSelected>>", lambda e: self._update_prealign_readout())
 
         self.prealign_main_label = ttk.Label(frm, text="Main: -", width=24)
@@ -1023,9 +1147,9 @@ class App(tk.Tk):
         self.prealign_sub_label.grid(row=1, column=2, columnspan=2, sticky="w", padx=5, pady=2)
 
         self.prealign_use_btn = ttk.Button(frm, text="Use → Group delay", command=self._use_prealign_delay)
-        self.prealign_use_btn.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        self.prealign_use_btn.grid(row=2, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.prealign_clear_btn = ttk.Button(frm, text="Clear", command=self._clear_prealign_delay)
-        self.prealign_clear_btn.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        self.prealign_clear_btn.grid(row=2, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=2, col=2, columnspan=2,
                          text="Factory pre-alignment delay offsets from the L-Acoustics Drive System Preset "
@@ -1146,33 +1270,33 @@ class App(tk.Tk):
 
     # --------------------------------------------------------- alignment --
     def _build_alignment_panel(self):
-        frm = ttk.LabelFrame(self.right_col, text="Sub → tops alignment wizard")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm = ttk.LabelFrame(self.alignment_col, text="Sub → tops alignment wizard")
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
-        ttk.Label(frm, text="Mains dist. to FOH").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Mains dist. to FOH").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.align_mains_distance = tk.DoubleVar(value=0.0)
         self._make_length_field(frm, self.align_mains_distance, row=0, col=1,
                                  on_commit=self._update_alignment_wizard)
 
-        ttk.Label(frm, text="Mains delay (ms)").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Mains delay (ms)").grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.align_mains_delay = tk.DoubleVar(value=0.0)
         e2 = ttk.Entry(frm, textvariable=self.align_mains_delay, width=10)
-        e2.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        e2.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self._bind_live_edit(e2, self._update_alignment_wizard)
 
-        ttk.Label(frm, text="Sub dist. to FOH").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Sub dist. to FOH").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.align_sub_distance = tk.DoubleVar(value=0.0)
         self._make_length_field(frm, self.align_sub_distance, row=1, col=1,
                                  on_commit=self._update_alignment_wizard)
 
         self.align_corrected_label = ttk.Label(frm, text="", width=28)
-        self.align_corrected_label.grid(row=1, column=2, columnspan=2, sticky="w", padx=5, pady=5)
+        self.align_corrected_label.grid(row=1, column=2, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.align_result_label = ttk.Label(frm, text="required group delay: -", width=42)
-        self.align_result_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=5, pady=5)
+        self.align_result_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.align_set_btn = ttk.Button(frm, text="Set group delay", command=self._set_group_delay_from_alignment)
-        self.align_set_btn.grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        self.align_set_btn.grid(row=3, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=3, col=1,
                          text="Distances are measured from each array's reference point (subs: the front "
@@ -1221,16 +1345,75 @@ class App(tk.Tk):
         self.group_delay.set(max(0.0, round(result, 4)))
         self._on_change()
 
+    # ------------------------------------------------------- floor bounce --
+    def _build_floor_bounce_panel(self):
+        frm = ttk.LabelFrame(self.alignment_col, text="Floor bounce null (FOH)")
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
+
+        ttk.Label(frm, text="Source height").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self.bounce_source_height = tk.DoubleVar(value=0.0)
+        self._make_length_field(frm, self.bounce_source_height, row=0, col=1,
+                                 on_commit=self._update_floor_bounce)
+
+        ttk.Label(frm, text="FOH mic distance").grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self.bounce_mic_distance = tk.DoubleVar(value=0.0)
+        self._make_length_field(frm, self.bounce_mic_distance, row=0, col=3,
+                                 on_commit=self._update_floor_bounce)
+
+        ttk.Label(frm, text="FOH mic height").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self.bounce_mic_height = tk.DoubleVar(value=1.2)
+        self._make_length_field(frm, self.bounce_mic_height, row=1, col=1,
+                                 on_commit=self._update_floor_bounce)
+
+        self.bounce_result_label = ttk.Label(frm, text="null: -", width=56)
+        self.bounce_result_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+
+        self._help_icon(frm, row=1, col=3,
+                         text="The comb filter from a single source's direct sound interfering with its "
+                              "own reflection off a flat floor between the source and a listening position "
+                              "(e.g. the FOH mic) -- a different mechanism from this app's own array-"
+                              "steering nulls (Avoid Point etc., which combine multiple elements): this is "
+                              "one source against its own floor reflection, using the mirror-image method. "
+                              "Source height and FOH mic height are both above the same floor; FOH mic "
+                              "distance is the horizontal distance between them (independent of Sub dist. "
+                              "to FOH above -- that one's the whole array treated as a point, this is "
+                              "whatever single source height you enter, e.g. 0 for a ground-stacked sub). "
+                              "Both heights at 0 means source and mic are both on the floor -- no separate "
+                              "reflection path, so no null. \"Null\" is the lowest, deepest notch (path "
+                              "difference = half a wavelength); \"peak\" is where reinforcement repeats "
+                              "(path difference = a whole wavelength) -- same comb pattern continues above "
+                              "it. \"bounce\" is the reflected path's level relative to direct from distance "
+                              "alone (not floor absorption, which isn't modelled) -- how deep the null can "
+                              "actually go. Ported from Merlijn van Veen's floor_bounce_V1.1.xlsx, verified "
+                              "to match its own numbers exactly (see README.md).")
+
+        frm.grid_columnconfigure(4, weight=1)
+
+    def _update_floor_bounce(self):
+        try:
+            result = floor_bounce(self.bounce_source_height.get(), self.bounce_mic_distance.get(),
+                                   self.bounce_mic_height.get(), self._speed_of_sound())
+        except (tk.TclError, ValueError):
+            self.bounce_result_label.config(text="null: -")
+            return
+        if result.null_hz is None:
+            self.bounce_result_label.config(
+                text="null: none (source and mic both at floor level -- no separate reflection path)")
+        else:
+            self.bounce_result_label.config(
+                text=f"null: {result.null_hz:.1f} Hz  (peak {result.peak_hz:.1f} Hz, "
+                     f"path diff {result.path_diff_m:.3f} m, bounce {result.bounce_level_db:.1f} dB down)")
+
     # -------------------------------------------------------- environment --
     def _build_environment_panel(self):
         frm = ttk.LabelFrame(self.right_col, text="Environment")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         self.temp_c = tk.DoubleVar(value=20.0)
         self._labeled_slider(frm, "Temperature (°C)", self.temp_c, -10.0, 40.0, row=0, increment=0.5)
 
         self.speed_of_sound_label = ttk.Label(frm, text="", width=14)
-        self.speed_of_sound_label.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.speed_of_sound_label.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.humidity = tk.DoubleVar(value=50.0)
         self._labeled_slider(frm, "Relative humidity (%)", self.humidity, 0.0, 100.0, row=1, increment=1.0)
@@ -1260,18 +1443,18 @@ class App(tk.Tk):
     # ------------------------------------------------------------- clock --
     def _build_clock_panel(self):
         frm = ttk.LabelFrame(self.right_col, text="DSP clock")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         self.dsp_clock = tk.StringVar(value="96 kHz (2 FS)")
         clock_cb = ttk.Combobox(frm, textvariable=self.dsp_clock, values=DSP_CLOCKS, state="readonly", width=14)
-        clock_cb.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        clock_cb.grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         clock_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
 
-        ttk.Label(frm, text="Show delay as").grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Show delay as").grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.delay_unit = tk.StringVar(value="ms")
         delay_unit_cb = ttk.Combobox(frm, textvariable=self.delay_unit, values=["ms", "samples"],
                                       state="readonly", width=8)
-        delay_unit_cb.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        delay_unit_cb.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         delay_unit_cb.bind("<<ComboboxSelected>>", lambda e: self._on_change())
 
         self._help_icon(frm, row=0, col=3,
@@ -1283,18 +1466,18 @@ class App(tk.Tk):
     # --------------------------------------------------------- dimensions --
     def _build_dimensions_panel(self):
         frm = ttk.LabelFrame(self.right_col, text="Sub box dimensions")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
         self.dimensions_frame = frm
 
         self.sub_profiles = {name: (w, d) for name, w, d in load_profiles()}
 
-        ttk.Label(frm, text="Profile").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Profile").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         default_profile = "L-Acoustics KS28 (Horizontal)" if "L-Acoustics KS28 (Horizontal)" in \
             self.sub_profiles else CUSTOM_PROFILE
         self.sub_profile = tk.StringVar(value=default_profile)
         profile_cb = ttk.Combobox(frm, textvariable=self.sub_profile,
                                    values=[CUSTOM_PROFILE] + list(self.sub_profiles), state="readonly", width=28)
-        profile_cb.grid(row=0, column=1, columnspan=2, sticky="w", padx=5, pady=5)
+        profile_cb.grid(row=0, column=1, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         profile_cb.bind("<<ComboboxSelected>>", self._on_profile_change)
 
         self._help_icon(frm, row=0, col=3,
@@ -1309,31 +1492,31 @@ class App(tk.Tk):
                               "spacing, and are no-ops for Physical Horizontal Array/Progressive Arc, which "
                               "have no Spacing field. Profiles load from sub_profiles.csv.")
 
-        ttk.Label(frm, text="Width").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Width").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.box_width = tk.DoubleVar(value=1.340)
         self._make_length_field(frm, self.box_width, row=1, col=1, on_commit=self._on_dimension_edited)
 
-        ttk.Label(frm, text="Depth").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Depth").grid(row=2, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.box_depth = tk.DoubleVar(value=0.702)
         self._make_length_field(frm, self.box_depth, row=2, col=1, on_commit=self._on_dimension_edited)
 
-        ttk.Label(frm, text="Gap between cabinets").grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Gap between cabinets").grid(row=3, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.cabinet_gap = tk.DoubleVar(value=0.0)
         self._make_length_field(frm, self.cabinet_gap, row=3, col=1, on_commit=self._on_change)
 
         self.collision_label = ttk.Label(frm, text="-", width=32)
-        self.collision_label.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.collision_label.grid(row=4, column=0, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.set_min_spacing_btn = ttk.Button(frm, text="Set min spacing", command=self._set_min_spacing)
-        self.set_min_spacing_btn.grid(row=1, column=2, sticky="w", padx=5, pady=5)
+        self.set_min_spacing_btn.grid(row=1, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.set_spacing_gap_btn = ttk.Button(frm, text="Set spacing (+ gap)", command=self._set_spacing_with_gap)
-        self.set_spacing_gap_btn.grid(row=3, column=2, sticky="w", padx=5, pady=5)
+        self.set_spacing_gap_btn.grid(row=3, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.acoustic_center_enabled = tk.BooleanVar(value=False)
         ac_chk = ttk.Checkbutton(frm, text="Acoustic centre offset", variable=self.acoustic_center_enabled,
                                   command=self._on_change)
-        ac_chk.grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        ac_chk.grid(row=5, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.acoustic_center_offset = tk.DoubleVar(value=0.30)
         self._make_length_field(frm, self.acoustic_center_offset, row=5, col=1, on_commit=self._on_change)
 
@@ -1483,22 +1666,22 @@ class App(tk.Tk):
     # -------------------------------------------------------------- venue --
     def _build_venue_panel(self):
         frm = ttk.LabelFrame(self.right_col, text="Venue → arc (FAR)")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
         self.venue_frame = frm
 
-        ttk.Label(frm, text="Length").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Length").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.venue_length = tk.DoubleVar(value=50.0)
         self._make_length_field(frm, self.venue_length, row=0, col=1, on_commit=self._update_venue_far, width=8)
 
-        ttk.Label(frm, text="Width").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Width").grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.venue_width = tk.DoubleVar(value=25.0)
         self._make_length_field(frm, self.venue_width, row=0, col=3, on_commit=self._update_venue_far, width=8)
 
         self.venue_far_label = ttk.Label(frm, text="FAR: -  arc: -", width=22)
-        self.venue_far_label.grid(row=0, column=4, sticky="w", padx=5, pady=5)
+        self.venue_far_label.grid(row=0, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.set_arc_btn = ttk.Button(frm, text="Set arc", command=self._set_arc_from_venue)
-        self.set_arc_btn.grid(row=0, column=5, sticky="w", padx=5, pady=5)
+        self.set_arc_btn.grid(row=0, column=5, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=0, col=6,
                          text="Length = throw/depth (front-to-back), width = coverage (side-to-side). "
@@ -1512,10 +1695,10 @@ class App(tk.Tk):
                               "there (see the Ellipse ratio row below for that case's other half).")
 
         self.venue_ellipse_label = ttk.Label(frm, text="ellipse ratio: -", width=22)
-        self.venue_ellipse_label.grid(row=1, column=4, sticky="w", padx=5, pady=5)
+        self.venue_ellipse_label.grid(row=1, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.use_venue_ellipse_btn = ttk.Button(frm, text="Use", command=self._use_venue_ellipse_ratio)
-        self.use_venue_ellipse_btn.grid(row=1, column=5, sticky="w", padx=5, pady=5)
+        self.use_venue_ellipse_btn.grid(row=1, column=5, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.venue_ellipse_help = self._help_icon(
             frm, row=1, col=6,
@@ -1607,20 +1790,20 @@ class App(tk.Tk):
     # --------------------------------------------------------- bandwidth --
     def _build_bandwidth_panel(self):
         frm = ttk.LabelFrame(self.left_col, text="Sub bandwidth → optimum spacing")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
         self.bandwidth_frame = frm
 
-        ttk.Label(frm, text="High (Hz)").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="High (Hz)").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.freq_high = tk.DoubleVar(value=60.0)
         e_high = ttk.Entry(frm, textvariable=self.freq_high, width=8)
-        e_high.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        e_high.grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self._bind_live_edit(e_high, self._on_change)
 
         self.optimum_label = ttk.Label(frm, text="optimum spacing: -", width=22)
-        self.optimum_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.optimum_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.use_optimum_btn = ttk.Button(frm, text="Use", command=self._use_optimum_spacing)
-        self.use_optimum_btn.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.use_optimum_btn.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=0, col=4,
                          text="Optimum spacing = fraction of a wavelength at the top of the passband "
@@ -1628,10 +1811,10 @@ class App(tk.Tk):
                               "Hybrids, applied to their column spacing) — the S.A.D. rule of thumb.")
 
         self.row_optimum_label = ttk.Label(frm, text="optimum row spacing (¼λ): -", width=28)
-        self.row_optimum_label.grid(row=1, column=2, sticky="w", padx=5, pady=5)
+        self.row_optimum_label.grid(row=1, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.use_row_optimum_btn = ttk.Button(frm, text="Use", command=self._use_optimum_row_spacing)
-        self.use_row_optimum_btn.grid(row=1, column=3, sticky="w", padx=5, pady=5)
+        self.use_row_optimum_btn.grid(row=1, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.row_optimum_help = self._help_icon(
             frm, row=1, col=4,
@@ -1641,7 +1824,7 @@ class App(tk.Tk):
                  "the column Spacing above.")
 
         self.grating_lobe_label = ttk.Label(frm, text="-", width=58)
-        self.grating_lobe_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=5, pady=5)
+        self.grating_lobe_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.grating_lobe_help = self._help_icon(
             frm, row=2, col=4,
             text="Steer-aware grating-lobe spacing limit: d < λ / (1 + |sin(Steer)|), the phased-"
@@ -1685,18 +1868,18 @@ class App(tk.Tk):
     # -------------------------------------------------------------- info --
     def _build_info_panel(self):
         frm = ttk.LabelFrame(self.left_col, text="Info")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         self.info_length_label = ttk.Label(frm, text="array length: -", width=20)
-        self.info_length_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.info_length_label.grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.info_1l_label = ttk.Label(frm, text="array 1λ: -", width=16)
-        self.info_1l_label.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        self.info_1l_label.grid(row=0, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.info_180_label = ttk.Label(frm, text="spk dist 180°: -", width=18)
-        self.info_180_label.grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.info_180_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.info_240_label = ttk.Label(frm, text="spk dist 240°: -", width=18)
-        self.info_240_label.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        self.info_240_label.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.info_360_label = ttk.Label(frm, text="spk dist 360°: -", width=18)
-        self.info_360_label.grid(row=0, column=4, sticky="w", padx=5, pady=5)
+        self.info_360_label.grid(row=0, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self._help_icon(frm, row=0, col=5,
                          text="array 1λ = frequency whose wavelength equals the array length (directivity "
@@ -1729,37 +1912,39 @@ class App(tk.Tk):
 
     # ---------------------------------------------------------------- osc --
     def _build_osc_panel(self):
-        frm = ttk.LabelFrame(self.left_col, text="OSC output")
-        frm.pack(fill="x", padx=10, pady=5)
+        frm = ttk.LabelFrame(self.osc_col, text="OSC output")
+        frm.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
+        self.osc_frame = frm
 
-        ttk.Label(frm, text="Host").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Host").grid(row=0, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.osc_host = tk.StringVar(value="127.0.0.1")
-        ttk.Entry(frm, textvariable=self.osc_host, width=16).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.osc_host, width=16).grid(row=0, column=1, padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
-        ttk.Label(frm, text="Port").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Port").grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.osc_port = tk.IntVar(value=5000)
-        ttk.Entry(frm, textvariable=self.osc_port, width=8).grid(row=0, column=3, padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.osc_port, width=8).grid(row=0, column=3, padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
-        ttk.Label(frm, text="Address prefix").grid(row=0, column=4, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="Address prefix").grid(row=0, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.osc_prefix = tk.StringVar(value="/sad/sub")
-        ttk.Entry(frm, textvariable=self.osc_prefix, width=14).grid(row=0, column=5, padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.osc_prefix, width=14).grid(row=0, column=5, padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.live_send = tk.BooleanVar(value=False)
         ttk.Checkbutton(frm, text="Live send", variable=self.live_send,
-                         command=self._apply_osc_settings).grid(row=1, column=0, sticky="w", padx=5, pady=5)
+                         command=self._apply_osc_settings).grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Apply / Reconnect", command=self._apply_osc_settings).grid(
-            row=1, column=1, columnspan=2, sticky="w", padx=5, pady=5)
+            row=1, column=1, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Send Now", command=self._send_now).grid(
-            row=1, column=3, sticky="w", padx=5, pady=5)
+            row=1, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
         self.osc_status = tk.StringVar(value="not connected")
         ttk.Label(frm, textvariable=self.osc_status, foreground="#666").grid(
-            row=1, column=4, columnspan=2, sticky="w", padx=5, pady=5)
+            row=1, column=4, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
     def _apply_osc_settings(self):
         try:
             self.osc_client = SimpleUDPClient(self.osc_host.get(), int(self.osc_port.get()))
             self._last_sent = {}  # new target -- send full state again, not just deltas
+            self._last_sent_indices = set()
             self.osc_status.set(f"ready → {self.osc_host.get()}:{self.osc_port.get()}")
         except Exception as e:
             self.osc_client = None
@@ -1780,6 +1965,24 @@ class App(tk.Tk):
             group_inverted = self._group_inverted()
             sent = 0
             total = 0
+            current_indices = {s.index for s in subs}
+            # A sub index that was live-sent before but isn't in this compute
+            # (count shrank, or a topology change re-numbered the array) would
+            # otherwise be left holding whatever delay/gain/polarity it last
+            # received forever -- reset its addresses to a safe silent state
+            # instead, and drop it from _last_sent so it's sent fresh if it
+            # ever reappears (e.g. count raised back up).
+            for idx in self._last_sent_indices - current_indices:
+                for suffix, value in (
+                    ("delay_ms", 0.0), ("delay_total_ms", 0.0), ("gain_db", GAIN_OSC_FLOOR_DB),
+                    ("gain_total_db", GAIN_OSC_FLOOR_DB), ("gain", 0.0), ("polarity", 0),
+                ):
+                    address = f"{prefix}/{idx}/{suffix}"
+                    total += 1
+                    self.osc_client.send_message(address, value)
+                    self._last_sent.pop(address, None)
+                    sent += 1
+            self._last_sent_indices = current_indices
             for s in subs:
                 total_gain = total_gain_db(s.gain_db, group_level)
                 for suffix, value in (
@@ -1803,7 +2006,7 @@ class App(tk.Tk):
     # -------------------------------------------------------------- table --
     def _build_table(self):
         outer = ttk.LabelFrame(self.left_col, text="Per-sub output")
-        outer.pack(fill="both", expand=True, padx=10, pady=5)
+        outer.pack(fill="both", expand=True, padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
 
         # A plain Frame doesn't scroll -- up to 48 subs (Physical / Arc /
         # Manual) won't all fit on screen at once, so the row grid lives
@@ -1837,8 +2040,6 @@ class App(tk.Tk):
         self.total_delay_header_lbl = header_labels[5]
 
         self.table_frame = frm
-        self.note = ttk.Label(self.left_col, text="", foreground="#666", wraplength=680, justify="left")
-        self.note.pack(fill="x", padx=12, pady=(0, 10))
 
     def _rebuild_rows(self, n, editable_all=False):
         for w in self.row_widgets:
@@ -1979,12 +2180,13 @@ class App(tk.Tk):
                                  or is_ellipse_capable or is_progressive or is_focus or is_avoid
                                  or uses_gradient_pattern)
         if has_topology_options:
-            self.topology_options_frame.pack(fill="x", padx=10, pady=5, after=self.spacing_label.master)
+            self.topology_options_frame.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y,
+                                              after=self.spacing_label.master)
         else:
             self.topology_options_frame.pack_forget()
         if uses_angle:
-            self.venue_frame.pack(fill="x", padx=10, pady=5, before=self.dimensions_frame)
-            self.taper_frame.pack(fill="x", padx=10, pady=5, before=self.bandwidth_frame)
+            self.venue_frame.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y, before=self.dimensions_frame)
+            self.taper_frame.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y, before=self.bandwidth_frame)
         else:
             self.venue_frame.pack_forget()
             self.taper_frame.pack_forget()
@@ -2061,7 +2263,7 @@ class App(tk.Tk):
                      "extension, not a S.A.D. topology.",
             TOPO_MANUAL: self._manual_note_text(),
         }
-        self.note.config(text=notes[topo])
+        self.topology_note_icon.tooltip.text = notes[topo]
 
         n = self.count.get() * (2 if (is_gradient or is_hybrid) else 1)
         self._rebuild_rows(n, editable_all=is_manual)
@@ -2085,11 +2287,12 @@ class App(tk.Tk):
             # X/Y convention can flip which column is depth without a topology
             # change firing (no _on_topology_change(), which would blow away
             # typed manual positions) -- keep the note's column letters in sync.
-            self.note.config(text=self._manual_note_text())
+            self.topology_note_icon.tooltip.text = self._manual_note_text()
         self._update_speed_of_sound()
         self._sync_group_distance_from_delay()
         self._refresh_unit_displays()
         self._update_alignment_wizard()
+        self._update_floor_bounce()
         self._update_collision_check()
         self._sync_level_taper()
         subs = self._compute()
@@ -2362,5 +2565,23 @@ class App(tk.Tk):
                 self.pol_widgets[i].config(text="Reversed" if eff_pol else "Normal")
 
 
+def _set_windows_dpi_aware():
+    """Tells Windows this app renders its own DPI scaling instead of being
+    bitmap-stretched. Without this, a scaled display (125%/150%, common on
+    laptops) compounds _fit_window_height's screen-size budget with an
+    extra layer of OS upscaling on top -- must run before the Tk root
+    window is created. No-op on non-Windows platforms."""
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()  # Windows 7/8 fallback
+        except (AttributeError, OSError):
+            pass
+
+
 if __name__ == "__main__":
+    _set_windows_dpi_aware()
     App().mainloop()

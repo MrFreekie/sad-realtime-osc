@@ -46,6 +46,16 @@ Ellipse in this app (`physical_ellipse_layout`, `_arc_column_delays_s`'s
 for each one's own "no tutorial ground truth to verify against" caveat,
 same honesty standard as the rest of this app's original extensions.
 
+The **Floor bounce null (FOH)** panel is a direct port of **Merlijn van
+Veen**'s `floor_bounce_V1.1.xlsx` (© 2014 Merlijn van Veen, All Rights
+Reserved, merlijnvanveen.nl) — unlike Ellipse above, that spreadsheet's
+formulas are plain, unprotected cell formulas, so `floor_bounce` in
+`array_math.py` reimplements its actual geometry (not an independent
+derivation from a hidden interface); its ripple/IR-sweep trace/plotting
+machinery was left out, only the direct/bounce/null/peak arithmetic was
+ported. Verified to match the spreadsheet's own cached values exactly —
+see the topology notes below.
+
 ## Run
 
 ```
@@ -325,9 +335,11 @@ the whole array at once with Group level. Only **Manual** mode lets you
 type per-sub trim directly in the table.
 
 Opens on **Arc / Broadside Steering** by default, with **6** subs and
-**1.4 m** Spacing. The
-window sizes itself to fit the current content on launch and again
-whenever the topology changes — it's still freely resizable by hand
+**1.4 m** Spacing. The window sizes itself to fit the current content on
+launch and again whenever the topology changes, capped to what the
+screen can actually show (`winfo_screenheight`/`winfo_screenwidth`,
+leaving room for the taskbar) — a topology/panel combination taller than
+that scrolls instead of being clipped. Still freely resizable by hand
 otherwise.
 
 Max sub count depends on topology: **End-Fire** up to 12, **Gradient /
@@ -340,16 +352,23 @@ stacking them all front-to-back, so a much larger count is still a
 realistic array (e.g. a long curved festival sub arc), unlike a 48-deep
 End-Fire stack or 24-pair Gradient line. The per-sub table scrolls (mouse
 wheel, or drag the scrollbar) rather than growing the window to fit every
-row — it grows with the row count up to about a dozen visible rows, then
-scrolls beyond that.
+row — it grows with the row count up to about 16 visible rows, then
+scrolls beyond that. Enlarging the window by hand grows the table
+further to fill the extra room, rather than leaving it blank below a
+fixed-size table.
 
-Two-column layout: the **left column** (Array, Level taper, Sub
-bandwidth, Info, the per-sub table, then OSC output) holds the panels
-you touch while working a show. The **right column** (Units, DSP clock,
-Environment, Venue → arc, Sub box dimensions, Group, Pre-alignment,
-Sub → tops alignment wizard) holds setup-once panels and stays a fixed
-height regardless of sub count, so adding subs no longer makes the whole
-window taller — only the table does (up to its own scroll cap, above).
+Four-tab layout, in order: **Design** (Array, Topology options, Level
+taper, Sub bandwidth, Info, the per-sub table) is what you're actually
+watching while running a show, and gets the most room since nothing
+else shares the tab with it. **Setup** (Units, DSP clock, Environment,
+Venue → arc, Sub box dimensions) holds venue/system parameters
+configured once per show. **Alignment** (Group, Pre-alignment delay
+lookup, Sub → tops alignment wizard, Floor bounce null) holds the
+calibration tasks also done once per show, kept separate from Setup's
+venue/system parameters. **OSC** holds OSC output on its own, last
+since it's touched far less often than Design. Each tab sizes and
+scrolls independently, down to a small floor for a short tab like OSC
+and up to whatever the screen allows before a tall one scrolls.
 
 Every panel's explanatory paragraph lives behind a small **?** icon next
 to its controls instead of a permanent wrapped block of grey text —
@@ -639,6 +658,45 @@ FOH than the mains — there's no positive sub delay that fixes that, the
 mains need delaying instead — so "Set group delay" clamps to 0 in that
 case rather than applying a negative number.
 
+## Floor bounce null (FOH)
+
+A different mechanism from every other null in this app: **Avoid
+Point** cancels by combining multiple *array elements*' phase at a
+target; this is one *single source* interfering with its own
+reflection off the flat floor between it and a listening position
+(e.g. the FOH mic) — the classic comb filter from a direct-plus-
+ground-bounce arrival. Enter **Source height** and **FOH mic height**
+(both above the same floor — 0/0 means both sit on the floor, so
+there's no separate reflection path and no null) and **FOH mic
+distance** (horizontal, independent of *Sub dist. to FOH* above — this
+panel doesn't assume the source is the sub array specifically, so it's
+its own field). Live output:
+
+```
+null  = lowest/deepest notch,   path difference = half a wavelength
+peak  = next reinforcement,     path difference = a whole wavelength
+```
+
+using the mirror-image method (`floor_bounce` in `array_math.py`):
+reflection ≡ a straight line from an image source at `-source height`
+to the mic, crossing the floor at the specular point. Also shown:
+**path diff** (bounce path − direct path, m) and **bounce** (the
+reflected path's level relative to direct from 1/r spreading alone,
+dB — not floor absorption, which isn't modelled — how deep the null
+could actually go with a fully reflective floor).
+
+Ported from Merlijn van Veen's `floor_bounce_V1.1.xlsx` (© 2014
+Merlijn van Veen, merlijnvanveen.nl) — ripple/IR-sweep plotting and
+multi-reflection sum tracing weren't ported (this app has no polar/SPL
+prediction of any kind, by design — see Credits/notes elsewhere), just
+the direct/bounce/null/peak arithmetic. Verified to match the
+spreadsheet's own cached values exactly (default example: 8 m source,
+25 m/1.8 m mic, 21°C → null 157.165 Hz) — this app's own speed of
+sound (Environment panel, Cramer 1993) is more complete than the
+spreadsheet's simple linear one, so results only line up exactly when
+you also match the spreadsheet's plain `c = 331.4 + 0.607×temp`
+(no humidity/altitude terms).
+
 ## Level taper (Arc / Physical / Progressive / Arc Hybrids only)
 
 Only shown when **Arc / Broadside Steering**, **Physical Horizontal
@@ -875,7 +933,7 @@ of the box.
 
 **New**, **Save**, **Save As...**, **Load...**, plus a free-text
 **Name / notes** field (e.g. venue + date), in the Project panel at the
-top of the left column.
+top of the Design tab.
 
 **New** resets every setting on screen to factory defaults — same
 confirmation-then-full-reset shape as Load, just with built-in defaults
@@ -887,9 +945,9 @@ project would.
 
 **Save** / **Save As...** save every setting on screen — array/topology, level taper,
 units, DSP clock, environment, group (including pre-alignment tracking),
-sub box dimensions, venue, bandwidth, the sub → tops alignment wizard, OSC
-target, and per-sub Manual placement — to a **`.sadrt`** file (plain JSON,
-see `project_io.py`).
+sub box dimensions, venue, bandwidth, the sub → tops alignment wizard,
+the floor bounce null panel, OSC target, and per-sub Manual placement —
+to a **`.sadrt`** file (plain JSON, see `project_io.py`).
 
 Everything is stored in canonical SI units (m/ms/dB/Hz/°C) regardless of
 the currently displayed length unit — loading a file re-renders the
