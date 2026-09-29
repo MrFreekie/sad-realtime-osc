@@ -183,7 +183,11 @@ python sad_realtime_osc.py
   the standard linear delay-steering ramp (`-x·sin(steer)/c`, `x` each
   element's straight-line position relative to centre) on top of the
   arc's own curvature, then re-zeroes the result so the earliest element
-  is still 0 ms. Positive steers towards the highest-numbered sub; 0 is
+  is still 0 ms. Positive steers towards the lowest-numbered sub (sub 1)
+  — the higher-numbered subs fire earlier, and a beam aims toward the
+  later-firing side (checked by far-field superposition; earlier versions
+  of this README and the tooltip had the direction backwards, the
+  delays themselves were always as described here); 0 is
   the default symmetric aim, straight ahead. Works even with Arc angle
   at 0° (pure delay-steering of an otherwise flat line).
 
@@ -886,6 +890,25 @@ summation limit, ⅔ of it, 240°, is its usable-bandwidth limit). S.A.D.'s
 panel also shows -6 dB ONAX and max angle, which need full polar/SPL
 summation modelling; left out here on purpose, same as the prediction
 plots.
+
+**Virtual source** (this app's own addition; second row of the Info panel,
+shown for the topologies that have an arc): where the sound appears to come
+from — how far *behind* the array's centre line, and how far *off-axis*
+toward which end. For Physical Horizontal Array and Progressive Arc it's the
+real arc's centre of curvature, exactly **Radius** behind the centre
+(Radius / Ellipse ratio for the Ellipse shape's vertex). For Arc / Broadside
+Steering and the two Arc Hybrids it's a least-squares fit of a point source to
+the delays actually applied (`arc_virtual_source` in `array_math.py`), so
+**Steer** and **Ellipse ratio** are included exactly as they enter the
+delays: Steer slides the source sideways (toward the higher-numbered end for
+positive Steer — the side of the minimum-delay element, while the beam itself
+aims the other way) and pulls it closer. The fit isn't exact, since the
+delay model is an arc's sagitta profile rather than true point-source
+distances — e.g. 10 elements, 0.94 m, 71° arc → about 6.4 m behind, fit error
+about 7 mm; the readout adds "(rough fit)" when the error exceeds 5 % of the
+distance (a wide arc with heavy Steer). Arc angle 0° is a flat line: source at
+infinity. Hybrids use column geometry only (front/rear row offset ignored).
+No S.A.D. ground truth to check it against, and not sent over OSC.
 
 ## OSC output
 

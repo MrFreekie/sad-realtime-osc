@@ -24,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 
 import ctypes
 import os
@@ -41,7 +41,7 @@ from array_math import (
     sub_positions_arc_hybrid_lateral, sub_positions_arc_hybrid_depth,
     physical_ellipse_layout, progressive_arc_layout, min_adjacent_chord,
     ellipse_ratio_from_far, angle_from_far_ellipse, focus_point, avoid_point,
-    gradient_null_angle_deg, alpha_from_null_angle_deg,
+    gradient_null_angle_deg, alpha_from_null_angle_deg, arc_virtual_source, physical_virtual_source_m,
     freq_at_wavelength_fraction, spacing_at_wavelength_fraction, grating_lobe_max_spacing_m,
     far_from_venue, arc_from_far, sub_positions, sub_positions_gradient, sub_positions_centered, array_length,
     gain_db_to_osc, total_delay_ms, effective_polarity, total_gain_db, GAIN_OSC_FLOOR_DB,
@@ -559,7 +559,7 @@ class App(tk.Tk):
             frm, row=3, col=3,
             text="Redirects the whole arc's aim off-centre without changing its coverage "
                  "angle (FAR) -- for venues that aren't symmetrical about the array's own "
-                 "centreline. Positive steers toward the highest-numbered sub. 0 = the "
+                 "centreline. Positive steers toward the lowest-numbered sub (sub 1). 0 = the "
                  "default symmetric aim, straight ahead.")
 
         self.shape_label = ttk.Label(frm, text="Shape")
@@ -1936,11 +1936,25 @@ class App(tk.Tk):
         self.info_360_label = ttk.Label(frm, text="spk dist 360°: -", width=18)
         self.info_360_label.grid(row=0, column=4, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
+        self.info_virtual_label = ttk.Label(frm, text="virtual source: -")
+        self.info_virtual_label.grid(row=1, column=0, columnspan=5, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+
         self._help_icon(frm, row=0, col=5,
                          text="array 1λ = frequency whose wavelength equals the array length (directivity "
                               "onset). spk dist NNN° = frequency at which the element spacing represents "
                               "that many degrees of phase. S.A.D.'s info panel also shows -6 dB ONAX and max "
-                              "angle, which need full polar/SPL summation and are left out here by design.")
+                              "angle, which need full polar/SPL summation and are left out here by design.\n\n"
+                              "virtual source = where the sound appears to come from: the point behind the "
+                              "array's centre that the delays (Arc / Arc Hybrids: including Steer and Ellipse "
+                              "ratio) or the real arc (Physical / Progressive: its centre of curvature) "
+                              "imitate. 'behind' is distance back from the array's centre line; 'off-axis' is "
+                              "sideways toward the sub named. For the electronic topologies it is a "
+                              "least-squares fit of a point source to the applied delays, not an exact "
+                              "result -- this app's own readout with no S.A.D. ground truth; '(rough fit)' "
+                              "appears when the delays are a poor point-source match (wide arc with heavy "
+                              "Steer). Flat line (Arc angle 0): source at infinity. Measured from the array "
+                              "centre; for the hybrids, column geometry only (front/rear row offset ignored). "
+                              "Not sent over OSC.")
 
     def _update_info_panel(self):
         topo = self.topology.get()
@@ -1964,6 +1978,32 @@ class App(tk.Tk):
         self.info_180_label.config(text=f"spk dist 180°: {f_180:.0f} Hz" if f_180 else "spk dist 180°: -")
         self.info_240_label.config(text=f"spk dist 240°: {f_240:.0f} Hz" if f_240 else "spk dist 240°: -")
         self.info_360_label.config(text=f"spk dist 360°: {f_360:.0f} Hz" if f_360 else "spk dist 360°: -")
+        self._update_virtual_source_label(topo, n, spacing)
+
+    def _update_virtual_source_label(self, topo, n, spacing):
+        text = "virtual source: n/a (no arc in this topology)"
+        try:
+            if topo in (TOPO_ARC, TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID):
+                result = arc_virtual_source(n, spacing, self.angle.get(), self.steer.get(),
+                                            self._ellipse_depth_scale())
+                unit = "column" if topo in ARC_HYBRID_TOPOLOGIES else "sub"
+            elif topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+                behind = physical_virtual_source_m(self.radius.get(), self._ellipse_depth_scale())
+                result = None if behind is None else (behind, 0.0, 0.0)
+                unit = "sub"
+            else:
+                result = False
+            if result is None:
+                text = "virtual source: at infinity (flat line, Arc angle 0°)"
+            elif result is not False:
+                behind, offset, rms = result
+                side = ("on-axis" if abs(offset) < 0.005 else
+                        f"{abs(offset):.2f} m off-axis toward {unit} {n if offset > 0 else 1} end")
+                rough = " (rough fit)" if rms > 0.05 * behind else ""
+                text = f"virtual source: {behind:.2f} m behind array centre, {side}{rough}"
+        except tk.TclError:
+            text = "virtual source: -"
+        self.info_virtual_label.config(text=text)
 
     # ---------------------------------------------------------------- osc --
     def _build_osc_panel(self):

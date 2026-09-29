@@ -3,6 +3,27 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.9.4] - 2026-09-29
+Added: **virtual source** readout in the Info panel (Arc / Broadside
+Steering, both Arc Hybrids, Physical Horizontal Array, Progressive Arc) --
+how far behind the array's centre the sound appears to come from, and how
+far off-axis toward which end, including Steer and Ellipse ratio. Physical/
+Progressive: the real arc's centre of curvature (Radius, or Radius / Ellipse
+ratio). Arc and Hybrids: least-squares point-source fit to the applied delays
+(`arc_virtual_source`), with a "(rough fit)" flag for wide-arc-plus-heavy-
+Steer cases. Read-only, not sent over OSC or saved.
+
+Fixed (docs only): the Steer direction was documented backwards. Positive
+Steer makes the higher-numbered subs fire earlier, so the beam aims toward
+the LOWER-numbered end (sub 1) -- confirmed by far-field superposition. The
+delays themselves are unchanged; README, tooltip and `arc_steering`'s
+docstring now say so. Note the Level taper's peak (`arc_steered_aim_index`)
+follows the minimum-delay element, i.e. the opposite side from where the
+beam aims.
+
+Changed: `array_math._arc_radius_m` factored out of `_arc_column_delays_s`
+(delays verified identical).
+
 ## [0.9.3] - 2026-09-29
 Added: **Makeup Gain** button (with **Clear**) in the Level taper panel.
 Adds the current on-axis taper cost (`taper_onaxis_loss_db`) to Group level

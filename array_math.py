@@ -217,6 +217,88 @@ def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_
     return out
 
 
+def _arc_radius_m(n: int, spacing_m: float, angle_deg: float) -> float:
+    """Implicit arc radius of the delayed-horizontal-array model: adjacent
+    elements angle_deg/(n-1) apart on the arc and spacing_m apart on the
+    chord. 0.0 when there is no curvature (n <= 1 or angle_deg <= 0)."""
+    if n <= 1 or angle_deg <= 0:
+        return 0.0
+    s = math.sin(math.radians(angle_deg) / (n - 1) / 2.0)
+    return spacing_m / (2.0 * s) if abs(s) > 1e-9 else 0.0
+
+
+def _fit_point_source(xs, path_m, seed):
+    """Best-fit point source (lateral xp, distance behind dp > 0) for
+    elements on a line at lateral positions xs whose delays, as path
+    lengths path_m[i] = c*delay_i, should equal hypot(x_i - xp, dp) minus one
+    common constant. Compass (pattern) search from `seed`, minimising the
+    variance of that residual; returns (xp, dp, rms_residual_m)."""
+    n = len(xs)
+
+    def err(xp, dp):
+        r = [math.hypot(x - xp, dp) - p for x, p in zip(xs, path_m)]
+        m = sum(r) / n
+        return sum((v - m) ** 2 for v in r)
+
+    xp, dp = seed
+    best = err(xp, dp)
+    step = max(0.5, 0.1 * dp)
+    for _ in range(400):
+        if step < 1e-4:
+            break
+        for cx, cd in ((xp + step, dp), (xp - step, dp), (xp, dp + step), (xp, max(dp - step, 1e-3))):
+            e = err(cx, cd)
+            if e < best:
+                best, xp, dp = e, cx, cd
+                break
+        else:
+            step *= 0.5
+    return xp, dp, math.sqrt(best / n)
+
+
+def arc_virtual_source(n: int, spacing_m: float, angle_deg: float,
+                        steer_deg: float = 0.0, depth_scale: float = 1.0):
+    """Virtual point source of the delayed-horizontal-array model (Arc /
+    Broadside Steering and the two Arc Hybrids' column-to-column
+    curvature): (distance_behind_m, offset_toward_higher_m, fit_rms_m), or
+    None when there's no curvature (angle 0 -- a flat line, or a steered
+    plane wave, whose source is at infinity).
+
+    It's the point P behind the line whose distances to the elements best
+    match the delays actually applied (delay_i * c = |P - element_i| minus a
+    constant), least-squares fitted to _arc_column_delays_s -- so Steer and
+    Ellipse ratio are included exactly as they enter the delays, with no
+    small-angle assumption. Independent of the speed of sound. The fit is
+    not exact: the model's delays are an arc's sagitta profile, not true
+    distances from a point, so fit_rms_m (rms path-length residual) says how
+    good a point-source description it is -- small for gentle arcs, larger
+    for wide arcs combined with heavy Steer. This app's own readout with no
+    S.A.D. ground truth. Positive offset = toward the higher-numbered end,
+    the side of the minimum-delay element; the beam itself aims the other
+    way (see arc_steering). Measured from the array's centre line (hybrids:
+    column geometry, ignoring the front/rear row offset)."""
+    radius = _arc_radius_m(n, spacing_m, angle_deg)
+    if radius <= 0 or depth_scale is None or depth_scale <= 0:
+        return None
+    path_m = _arc_column_delays_s(n, spacing_m, angle_deg, 1.0, steer_deg, depth_scale)
+    xs = [(i - (n - 1) / 2.0) * spacing_m for i in range(n)]
+    rho = radius / depth_scale
+    offset, behind, rms = _fit_point_source(xs, path_m, (rho * math.sin(math.radians(steer_deg)), rho))
+    return behind, offset, rms
+
+
+def physical_virtual_source_m(radius_m: float, ratio: float = 1.0):
+    """Distance behind the centre element of the physical arc's centre of
+    curvature, where the sound appears to come from: exactly radius_m for a
+    true circle (Physical Horizontal Array, Progressive Arc -- every element
+    is radius_m from it), radius_m/ratio at the vertex of an Ellipse (ratio
+    scales the depth, so the curvature at the centre is 1/ratio times
+    tighter). None if radius_m or ratio isn't positive."""
+    if radius_m is None or radius_m <= 0 or ratio is None or ratio <= 0:
+        return None
+    return radius_m / ratio
+
+
 def _arc_column_delays_s(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
                           steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[float]:
     """Per-column delay, seconds, for n columns spaced spacing_m apart in a
@@ -242,14 +324,8 @@ def _arc_column_delays_s(n: int, spacing_m: float, angle_deg: float, speed_mps: 
         return [0.0] * n
 
     center = (n - 1) / 2.0
-    if angle_deg > 0:
-        d_phi = math.radians(angle_deg) / (n - 1)
-        half_step = d_phi / 2.0
-        s = math.sin(half_step)
-        radius = spacing_m / (2.0 * s) if abs(s) > 1e-9 else 0.0
-    else:
-        d_phi = 0.0
-        radius = 0.0
+    radius = _arc_radius_m(n, spacing_m, angle_deg)
+    d_phi = math.radians(angle_deg) / (n - 1) if angle_deg > 0 else 0.0
 
     steer_rad = math.radians(steer_deg)
     raw_delays_s = []
@@ -286,11 +362,14 @@ def arc_steering(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
     e.g. for a venue that isn't symmetrical about the array's centerline
     -- without changing its coverage angle (FAR). It superimposes the
     standard linear delay-steering ramp (delay_i = -x_i*sin(steer)/c,
-    x_i the element's straight-line position relative to center, same
-    convention as sub_positions_centered) on top of the arc's own
-    curvature; positive steer_deg aims toward the higher-numbered end of
-    the array. The combined profile is then re-zeroed so the earliest
-    element is still 0 ms, since a real delay line can't go negative.
+    x_i = (i - center)*spacing, i.e. sub 1 at NEGATIVE x -- the mirror of
+    sub_positions_centered) on top of the arc's own curvature. Positive
+    steer_deg makes the higher-numbered elements fire earlier, so the
+    beam aims toward the LOWER-numbered end (sub 1), verified by far-field
+    superposition; the minimum-delay element (arc_steered_aim_index) moves
+    the other way, toward the higher-numbered end. The combined profile is
+    then re-zeroed so the earliest element is still 0 ms, since a real
+    delay line can't go negative.
 
     depth_scale is Ellipse mode's electronic equivalent of
     physical_ellipse_layout's ratio -- this topology is physically a
