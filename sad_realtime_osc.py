@@ -871,20 +871,22 @@ class App(tk.Tk):
         self.atten_label = ttk.Label(frm, text="Max atten (dB)")
         self.atten_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.taper_max_atten = tk.DoubleVar(value=0.0)
+        commit_atten = self._clamped_commit(self.taper_max_atten, 0.0, 30.0)
         self.atten_spin = ttk.Spinbox(frm, from_=0.0, to=30.0, increment=0.5,
-                                       textvariable=self.taper_max_atten, width=6, command=self._on_change)
+                                       textvariable=self.taper_max_atten, width=6, command=commit_atten)
         self.atten_spin.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
-        self.atten_spin.bind("<Return>", lambda e: self._on_change())
-        self.atten_spin.bind("<FocusOut>", lambda e: self._on_change())
+        self.atten_spin.bind("<Return>", lambda e: commit_atten())
+        self.atten_spin.bind("<FocusOut>", lambda e: commit_atten())
 
         self.sidelobe_label = ttk.Label(frm, text="Sidelobe (dB)")
         self.sidelobe_label.grid(row=0, column=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.taper_sidelobe_db = tk.DoubleVar(value=30.0)
+        commit_sidelobe = self._clamped_commit(self.taper_sidelobe_db, 10.0, 100.0)
         self.sidelobe_spin = ttk.Spinbox(frm, from_=10.0, to=100.0, increment=1.0,
-                                          textvariable=self.taper_sidelobe_db, width=6, command=self._on_change)
+                                          textvariable=self.taper_sidelobe_db, width=6, command=commit_sidelobe)
         self.sidelobe_spin.grid(row=0, column=3, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
-        self.sidelobe_spin.bind("<Return>", lambda e: self._on_change())
-        self.sidelobe_spin.bind("<FocusOut>", lambda e: self._on_change())
+        self.sidelobe_spin.bind("<Return>", lambda e: commit_sidelobe())
+        self.sidelobe_spin.bind("<FocusOut>", lambda e: commit_sidelobe())
 
         self._help_icon(frm, row=0, col=4,
                          text="Live gain taper, always following each sub's Gain trim -- 0 dB at the "
@@ -999,6 +1001,20 @@ class App(tk.Tk):
         self._makeup_group_level = target
         self._update_makeup_note()
         self._on_change()
+
+    def _clamped_commit(self, var, lo, hi):
+        """Commit callback for a plain Spinbox: clamps typed text to
+        [lo, hi] (a project load clamps to the same range) and then runs
+        _on_change. Invalid text is left for _on_change's own handling."""
+        def commit():
+            try:
+                value = var.get()
+            except tk.TclError:
+                value = None
+            if value is not None and not lo <= value <= hi:
+                var.set(max(lo, min(hi, value)))
+            self._on_change()
+        return commit
 
     def _on_taper_window_change(self):
         """Chebyshev/Taylor need a Sidelobe (dB) parameter instead of Max

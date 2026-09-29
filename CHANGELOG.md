@@ -84,8 +84,8 @@ it, so e.g. an Ellipse ratio of 3.0 ran live but came back as 2.0 (with a
 warning) after save/load. The ranged fields (Arc, Steer, Ellipse ratio,
 Progression, Group delay/level, Temperature, Humidity, Altitude, ...) now clamp
 a typed value to their own range when committed (Return / focus-out / arrows).
-Pattern alpha and Null angle keep their own handling. The taper's Max atten /
-Sidelobe boxes aren't covered by this yet.
+Pattern alpha and Null angle keep their own handling. The taper's Max atten
+(0-30 dB) and Sidelobe (10-100 dB) boxes clamp the same way.
 
 Changed (internal, no behaviour change intended):
 - Slider drags and Manual typing now go through `_schedule_change`, which
