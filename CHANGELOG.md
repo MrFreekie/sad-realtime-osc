@@ -37,6 +37,23 @@ Fixed: typing a **Null angle** outside 90-180 left that number showing next
 to an unchanged alpha (whose real null was elsewhere). The field now snaps
 back to the angle the current alpha actually gives.
 
+Fixed (smaller GUI issues from a QA pass):
+- The taper cost readout is now computed from the 2-decimal trims actually
+  applied, so it can no longer differ by 0.01 dB from them.
+- Group level no longer shows `-0.0` after Makeup Gain / Clear.
+- OSC port: a non-numeric, empty or fractional port ("abc", "5000.5") now
+  reads "port must be a whole number, 1-65535" instead of a raw Tk message
+  (or being silently truncated).
+- Physical / Progressive with Radius 0 says "Radius is 0" in the virtual
+  source line instead of blaming the Arc angle.
+- Venue -> arc: when the venue is wider than deep on a circle, the label
+  explains why there's no arc (try Shape = Ellipse) and "Set arc" is
+  disabled instead of silently doing nothing.
+- Manual topology: typed X / Y / gain / polarity values now survive a count
+  change (rows that still exist keep them; new rows start at 0) and a hop to
+  another topology and back. New / Load zero them first, so they never leak
+  between projects.
+
 Changed: `array_math._arc_radius_m` factored out of `_arc_column_delays_s`
 (delays verified identical).
 

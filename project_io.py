@@ -510,6 +510,12 @@ def apply_project_dict(app, data: dict) -> list[str]:
 
     manual = section("manual")
     n = len(app.manual_x_vars)
+    # Rows now keep typed Manual values across rebuilds, so a load/New must
+    # zero them itself before applying whatever the file has.
+    for v in app.manual_x_vars + app.manual_y_vars + app.manual_gain_vars:
+        v.set(0.0)
+    for v in app.manual_pol_vars:
+        v.set(False)
     for vars_list, key, clamp_range in (
         (app.manual_x_vars, "x_m", None),
         (app.manual_y_vars, "y_m", None),

@@ -962,7 +962,7 @@ class App(tk.Tk):
         if level is None:
             return
         base = level - self.makeup_contribution_db
-        target = round(max(-40.0, min(18.0, base - self._last_taper_onaxis_db)), 2)
+        target = round(max(-40.0, min(18.0, base - self._last_taper_onaxis_db)), 2) + 0.0  # + 0.0: no "-0.0"
         self.group_level.set(target)
         self.makeup_contribution_db = target - base
         self._makeup_group_level = target
@@ -973,7 +973,7 @@ class App(tk.Tk):
         level = self._drop_stale_makeup()
         if level is None or self.makeup_contribution_db == 0.0:
             return
-        target = round(level - self.makeup_contribution_db, 2)
+        target = round(level - self.makeup_contribution_db, 2) + 0.0
         self.group_level.set(target)
         self.makeup_contribution_db = 0.0
         self._makeup_group_level = target
@@ -1022,11 +1022,12 @@ class App(tk.Tk):
             taper = level_taper_db(n, window, max_atten, center_index, sidelobe_db)
         except ValueError:
             return
+        taper = [round(db, 2) + 0.0 for db in taper]  # what's actually applied below -- keeps the cost readout honest
         for i, db in enumerate(taper):
             targets = (i * 2, i * 2 + 1) if is_hybrid else (i,)
             for j in targets:
                 if j < len(self.trim_vars):
-                    self.trim_vars[j].set(round(db, 2))
+                    self.trim_vars[j].set(db)
         onaxis = taper_onaxis_loss_db(taper)
         power = taper_power_loss_db(taper)
         self._last_taper_onaxis_db = onaxis
@@ -1811,9 +1812,12 @@ class App(tk.Tk):
             ellipse_arc = angle_from_far_ellipse(far)
             self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: {ellipse_arc:.1f}°")
         elif arc is None:
-            self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: n/a")
+            self.venue_far_label.config(
+                text=f"FAR: {far:.2f}  arc: n/a (wider than deep -- a circle can't; try Shape = Ellipse)")
         else:
             self.venue_far_label.config(text=f"FAR: {far:.2f}  arc: {arc:.1f}°")
+        can_set_arc = far is not None and (arc is not None or is_ellipse)
+        self.set_arc_btn.config(state="normal" if can_set_arc else "disabled")
 
         if is_ellipse:
             ratio = ellipse_ratio_from_far(far)
@@ -2016,7 +2020,8 @@ class App(tk.Tk):
             else:
                 result = False
             if result is None:
-                text = "virtual source: at infinity (flat line, Arc angle 0°)"
+                text = ("virtual source: at infinity (Radius is 0)" if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE)
+                        else "virtual source: at infinity (flat line, Arc angle 0°)")
             elif result is not False:
                 behind, offset, rms = result
                 side = ("on-axis" if abs(offset) < 0.005 else
@@ -2064,7 +2069,10 @@ class App(tk.Tk):
         values are being streamed."""
         try:
             host = self.osc_host.get().strip()
-            port = int(self.osc_port.get())
+            raw_port = str(self.getvar(self.osc_port._name)).strip()
+            if not raw_port.isdigit():
+                raise ValueError("port must be a whole number, 1-65535")
+            port = int(raw_port)
             prefix = self.osc_prefix.get().strip().rstrip("/")
             if not host:
                 raise ValueError("host is empty")
@@ -2206,11 +2214,22 @@ class App(tk.Tk):
             for widget in w:
                 widget.destroy()
         self.row_widgets.clear()
+        def carried(old_vars, make, default):
+            # Typed Manual values survive a count change (or a topology hop
+            # and back) for the rows that still exist; new rows start at default.
+            old = []
+            for v in old_vars:
+                try:
+                    old.append(v.get())
+                except tk.TclError:
+                    old.append(default)
+            return [make(value=old[i] if i < len(old) else default) for i in range(n)]
+
         self.trim_vars = [tk.DoubleVar(value=0.0) for _ in range(n)]
-        self.manual_x_vars = [tk.DoubleVar(value=0.0) for _ in range(n)]
-        self.manual_y_vars = [tk.DoubleVar(value=0.0) for _ in range(n)]
-        self.manual_gain_vars = [tk.DoubleVar(value=0.0) for _ in range(n)]
-        self.manual_pol_vars = [tk.BooleanVar(value=False) for _ in range(n)]
+        self.manual_x_vars = carried(getattr(self, "manual_x_vars", []), tk.DoubleVar, 0.0)
+        self.manual_y_vars = carried(getattr(self, "manual_y_vars", []), tk.DoubleVar, 0.0)
+        self.manual_gain_vars = carried(getattr(self, "manual_gain_vars", []), tk.DoubleVar, 0.0)
+        self.manual_pol_vars = carried(getattr(self, "manual_pol_vars", []), tk.BooleanVar, False)
         self.y_labels = []
         self.x_labels = []
         self.rotation_labels = []
