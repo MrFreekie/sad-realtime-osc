@@ -87,6 +87,15 @@ a typed value to their own range when committed (Return / focus-out / arrows).
 Pattern alpha and Null angle keep their own handling. The taper's Max atten
 (0-30 dB) and Sidelobe (10-100 dB) boxes clamp the same way.
 
+Fixed: project-load warnings were misleading. A non-numeric or missing value
+in a project field (e.g. `steer_deg: "a"`) was reported as "out of range --
+clamped to <current value>"; it now says it isn't a valid number and the
+current value was kept. NaN / infinity in those fields is treated the same
+way instead of being loaded (it slipped through the range check before). A
+sub count too big for the topology used to give two overlapping warnings
+("clamped to 48" then "clamped to 24"); it's now one: "Sub count 999 in the
+file isn't possible for this topology -- using 24."
+
 Changed (internal, no behaviour change intended):
 - Slider drags and Manual typing now go through `_schedule_change`, which
   runs the recompute + OSC send once when Tk is idle instead of once per

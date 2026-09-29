@@ -16,6 +16,7 @@ that didn't load cleanly instead of crashing or losing the caller's
 current state.
 """
 import json
+import math
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
@@ -42,13 +43,27 @@ _TOPOLOGY_FROM_KEY = {v: k for k, v in _TOPOLOGY_KEYS.items()}
 
 
 def _clamp(value, lo, hi, default):
+    """(value, problem): problem is None when `value` is fine, "clamped" when
+    it was a number outside [lo, hi] (returned pulled into range), or
+    "invalid" when it isn't a finite number at all (returns `default`)."""
     try:
         value = float(value)
     except (TypeError, ValueError):
-        return default, True
+        return default, "invalid"
+    if not math.isfinite(value):
+        return default, "invalid"
     if value < lo or value > hi:
-        return max(lo, min(hi, value)), True
-    return value, False
+        return max(lo, min(hi, value)), "clamped"
+    return value, None
+
+
+def _clamp_warning(label, problem, value):
+    """Human-readable warning for _clamp's `problem`, or None."""
+    if problem == "clamped":
+        return f"{label} out of range -- clamped to {value}."
+    if problem == "invalid":
+        return f"{label} isn't a valid number -- kept current value ({value})."
+    return None
 
 
 def build_project_dict(app) -> dict:
@@ -198,16 +213,16 @@ def apply_project_dict(app, data: dict) -> list[str]:
         topo_label = app.topology.get()
     app.topology.set(topo_label)
 
+    file_count = None  # the file's own count, once it's known to be a valid int
     try:
         raw_count = int(array.get("count", app.count.get()))
     except (TypeError, ValueError):
         warnings.append("Invalid sub count -- kept current value.")
     else:
         from sad_realtime_osc import MAX_SUBS_SPATIAL
-        clamped_count = max(1, min(MAX_SUBS_SPATIAL, raw_count))
-        app.count.set(clamped_count)
-        if clamped_count != raw_count:
-            warnings.append(f"'count' out of range -- clamped to {clamped_count}.")
+        app.count.set(max(1, min(MAX_SUBS_SPATIAL, raw_count)))
+        if array.get("count") is not None:
+            file_count = raw_count
 
     for var, key, lo, hi in (
         (app.spacing, "spacing_m", 0.001, 100000.0),
@@ -224,10 +239,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
         (app.gradient_alpha, "gradient_alpha", 0.0, 0.9),
     ):
         if key in array:
-            value, clamped = _clamp(array[key], lo, hi, var.get())
+            value, problem = _clamp(array[key], lo, hi, var.get())
             var.set(value)
-            if clamped:
-                warnings.append(f"'{key}' out of range -- clamped to {value}.")
+            if problem:
+                warnings.append(_clamp_warning(f"'{key}'", problem, value))
 
     from sad_realtime_osc import GRADIENT_PATTERNS, CUSTOM_PROFILE
     pattern = array.get("gradient_pattern", app.gradient_pattern.get())
@@ -247,9 +262,9 @@ def apply_project_dict(app, data: dict) -> list[str]:
     # restoring manual per-sub data below, since _on_topology_change wipes
     # and resizes manual_x_vars/manual_y_vars/etc. to match.
     app._on_topology_change()
-    if array.get("count") is not None and app.count.get() != array.get("count"):
+    if file_count is not None and app.count.get() != file_count:
         warnings.append(
-            f"Sub count clamped to {app.count.get()} (max for this topology).")
+            f"Sub count {file_count} in the file isn't possible for this topology -- using {app.count.get()}.")
 
     taper = section("level_taper")
     from array_math import LEVEL_TAPER_WINDOWS, PARAMETRIC_TAPER_WINDOWS
@@ -266,15 +281,15 @@ def apply_project_dict(app, data: dict) -> list[str]:
     app._set_widgets_visible((app.sidelobe_label, app.sidelobe_spin), is_parametric)
     app._set_widgets_visible((app.atten_label, app.atten_spin), not is_parametric)
     if "max_atten_db" in taper:
-        value, clamped = _clamp(taper["max_atten_db"], 0.0, 30.0, app.taper_max_atten.get())
+        value, problem = _clamp(taper["max_atten_db"], 0.0, 30.0, app.taper_max_atten.get())
         app.taper_max_atten.set(value)
-        if clamped:
-            warnings.append("Level taper max atten out of range -- clamped.")
+        if problem:
+            warnings.append(_clamp_warning("Level taper max atten", problem, value))
     if "sidelobe_db" in taper:
-        value, clamped = _clamp(taper["sidelobe_db"], 10.0, 100.0, app.taper_sidelobe_db.get())
+        value, problem = _clamp(taper["sidelobe_db"], 10.0, 100.0, app.taper_sidelobe_db.get())
         app.taper_sidelobe_db.set(value)
-        if clamped:
-            warnings.append("Level taper sidelobe level out of range -- clamped.")
+        if problem:
+            warnings.append(_clamp_warning("Level taper sidelobe level", problem, value))
 
     units = section("units")
     unit = units.get("length_unit", app.unit.get())
@@ -310,10 +325,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
         (app.altitude, "altitude_m", 0.0, 9000.0),
     ):
         if key in env:
-            value, clamped = _clamp(env[key], lo, hi, var.get())
+            value, problem = _clamp(env[key], lo, hi, var.get())
             var.set(value)
-            if clamped:
-                warnings.append(f"'{key}' out of range -- clamped to {value}.")
+            if problem:
+                warnings.append(_clamp_warning(f"'{key}'", problem, value))
 
     group = section("group")
     if "delay_ms" in group:
@@ -323,10 +338,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
             warnings.append("Invalid group delay -- kept current value.")
     app.group_polarity.set("Inverted" if group.get("inverted") else "Normal")
     if "level_db" in group:
-        value, clamped = _clamp(group["level_db"], -40.0, 18.0, app.group_level.get())
+        value, problem = _clamp(group["level_db"], -40.0, 18.0, app.group_level.get())
         app.group_level.set(value)
-        if clamped:
-            warnings.append("Group level out of range -- clamped.")
+        if problem:
+            warnings.append(_clamp_warning("Group level", problem, value))
     try:
         app.makeup_contribution_db = float(group.get("makeup_db", 0.0))
     except (TypeError, ValueError):
@@ -411,10 +426,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
 
     bandwidth = section("bandwidth")
     if "freq_high_hz" in bandwidth:
-        value, clamped = _clamp(bandwidth["freq_high_hz"], 1.0, 20000.0, app.freq_high.get())
+        value, problem = _clamp(bandwidth["freq_high_hz"], 1.0, 20000.0, app.freq_high.get())
         app.freq_high.set(value)
-        if clamped:
-            warnings.append("Sub bandwidth high frequency out of range -- clamped.")
+        if problem:
+            warnings.append(_clamp_warning("Sub bandwidth high frequency", problem, value))
 
     align = section("alignment_wizard")
     for var, key in (
@@ -435,10 +450,10 @@ def apply_project_dict(app, data: dict) -> list[str]:
         (app.bounce_mic_height, "mic_height_m"),
     ):
         if key in bounce:
-            value, clamped = _clamp(bounce[key], 0.0, 100000.0, var.get())
+            value, problem = _clamp(bounce[key], 0.0, 100000.0, var.get())
             var.set(value)
-            if clamped:
-                warnings.append(f"Floor bounce '{key}' out of range -- clamped.")
+            if problem:
+                warnings.append(_clamp_warning(f"Floor bounce '{key}'", problem, value))
 
     osc = section("osc")
     if "host" in osc:
