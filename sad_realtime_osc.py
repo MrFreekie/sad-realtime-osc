@@ -799,6 +799,10 @@ class App(tk.Tk):
             return
         alpha = alpha_from_null_angle_deg(angle)
         if alpha is None:
+            # Outside 90-180: no such null exists -- put back the real angle
+            # instead of leaving the typed number showing next to an alpha
+            # that doesn't match it.
+            self._sync_null_angle_from_alpha()
             return
         self.gradient_alpha.set(round(alpha, 4))
         self.gradient_pattern.set(CUSTOM_PROFILE)
@@ -1176,7 +1180,9 @@ class App(tk.Tk):
             ms = delay_ms_for_distance(self.group_delay_m.get(), self._speed_of_sound())
         except tk.TclError:
             return
-        self.group_delay.set(round(ms, 4))
+        # A real delay line can't go negative; the ms control floors at 0
+        # too. _on_change re-syncs the Distance field to the clamped value.
+        self.group_delay.set(round(max(ms, 0.0), 4))
         self._on_change()
 
     # ---------------------------------------------------- pre-alignment --

@@ -28,6 +28,15 @@ remembers the exact Group level it set and forgets its contribution (and
 clears the orange note) as soon as Group level differs, including after a
 project load.
 
+Fixed: typing a negative **Group Distance** produced a negative Group delay
+(e.g. -8.72 ms), which was then sent over OSC as a negative `delay_total_ms`
+no DSP can apply. Group delay now floors at 0 from the Distance field too,
+and the Distance field snaps back to match.
+
+Fixed: typing a **Null angle** outside 90-180 left that number showing next
+to an unchanged alpha (whose real null was elsewhere). The field now snaps
+back to the angle the current alpha actually gives.
+
 Changed: `array_math._arc_radius_m` factored out of `_arc_column_delays_s`
 (delays verified identical).
 
