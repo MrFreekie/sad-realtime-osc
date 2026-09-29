@@ -74,13 +74,16 @@ def water_vapor_mole_fraction(temp_c: float, pressure_pa: float, relative_humidi
     return h * f * psv / pressure_pa
 
 
+_ISA_P0, _ISA_T0, _ISA_LAPSE = 101325.0, 288.15, 0.0065
+_ISA_G, _ISA_M, _ISA_R = 9.80665, 0.0289644, 8.3144598
+
+
 def pressure_at_altitude_pa(altitude_m: float) -> float:
     """Atmospheric pressure at altitude_m above sea level, International
     Standard Atmosphere model. This is elevation only -- it doesn't
     account for day-to-day weather-driven pressure variation."""
-    p0, t0, lapse = 101325.0, 288.15, 0.0065
-    g, m, r = 9.80665, 0.0289644, 8.3144598
-    return p0 * (1.0 - lapse * altitude_m / t0) ** (g * m / (r * lapse))
+    base = max(1.0 - _ISA_LAPSE * altitude_m / _ISA_T0, 1e-6)
+    return _ISA_P0 * base ** (_ISA_G * _ISA_M / (_ISA_R * _ISA_LAPSE))
 
 
 def speed_of_sound(temp_c: float, relative_humidity_pct: float = 50.0, altitude_m: float = 0.0) -> float:
@@ -242,7 +245,8 @@ def _arc_column_delays_s(n: int, spacing_m: float, angle_deg: float, speed_mps: 
     if angle_deg > 0:
         d_phi = math.radians(angle_deg) / (n - 1)
         half_step = d_phi / 2.0
-        radius = spacing_m / (2.0 * math.sin(half_step)) if math.sin(half_step) != 0 else 0.0
+        s = math.sin(half_step)
+        radius = spacing_m / (2.0 * s) if abs(s) > 1e-9 else 0.0
     else:
         d_phi = 0.0
         radius = 0.0
@@ -386,6 +390,15 @@ def physical_horizontal_array(n: int, gain_trim_db=None) -> list[SubOutput]:
     return [SubOutput(i + 1, 0.0, trims[i], False) for i in range(n)]
 
 
+def _arc_point(radius_m: float, phi_deg: float, depth_scale: float = 1.0) -> tuple[float, float]:
+    """(depth_m, lateral_m) for a point on a circular arc at angle phi_deg
+    from center, with optional depth_scale ratio (Ellipse mode). Used by
+    physical_arc_layout, physical_ellipse_layout, and progressive_arc_layout
+    to avoid duplicating the sagitta geometry."""
+    phi = math.radians(phi_deg)
+    return (-depth_scale * radius_m * (1.0 - math.cos(phi)), radius_m * math.sin(phi))
+
+
 def physical_arc_layout(n: int, radius_m: float, angle_deg: float):
     """(depth_m, lateral_m, rotation_deg) for each of n elements placed on
     a real arc of radius_m spanning angle_deg, symmetric about the
@@ -404,9 +417,7 @@ def physical_arc_layout(n: int, radius_m: float, angle_deg: float):
     out = []
     for i in range(n):
         phi_deg = (center - i) * d_phi
-        phi = math.radians(phi_deg)
-        lateral = radius_m * math.sin(phi)
-        depth = -radius_m * (1.0 - math.cos(phi))
+        depth, lateral = _arc_point(radius_m, phi_deg)
         out.append((depth, lateral, phi_deg))
     return out
 
@@ -423,6 +434,15 @@ def physical_arc_chord_spacing(n: int, radius_m: float, angle_deg: float):
     return 2.0 * radius_m * math.sin(math.radians(d_phi) / 2.0)
 
 
+def _trims(gain_trim_db, n: int) -> list[float]:
+    """Normalize gain_trim_db list to exactly n elements, or raise ValueError."""
+    if not gain_trim_db:
+        return [0.0] * n
+    if len(gain_trim_db) < n:
+        raise ValueError(f"gain_trim_db has {len(gain_trim_db)} entries, need {n}")
+    return gain_trim_db[:n]
+
+
 def min_adjacent_chord(layout) -> float:
     """Smallest straight-line distance between two physically adjacent
     elements in a (depth_m, lateral_m, rotation_deg) layout list -- the
@@ -434,8 +454,8 @@ def min_adjacent_chord(layout) -> float:
     if len(layout) < 2:
         return None
     return min(
-        math.hypot(layout[i + 1][0] - layout[i][0], layout[i + 1][1] - layout[i][1])
-        for i in range(len(layout) - 1))
+        math.hypot(b[0] - a[0], b[1] - a[1])
+        for a, b in zip(layout, layout[1:]))
 
 
 def physical_ellipse_layout(n: int, radius_m: float, angle_deg: float, ratio: float = 1.0):
@@ -465,9 +485,8 @@ def physical_ellipse_layout(n: int, radius_m: float, angle_deg: float, ratio: fl
     center = (n - 1) / 2.0
     out = []
     for i in range(n):
-        phi = math.radians((center - i) * d_phi)
-        lateral = radius_m * math.sin(phi)
-        depth = -ratio * radius_m * (1.0 - math.cos(phi))
+        phi_deg = (center - i) * d_phi
+        depth, lateral = _arc_point(radius_m, phi_deg, ratio)
         out.append((depth, lateral, 0.0))
     return out
 
@@ -491,17 +510,17 @@ def angle_from_far_ellipse(far):
     """Arc angle for venue-linked Ellipse mode: identical to
     arc_from_far for FAR >= 1 (so Ellipse mode matches the plain circle
     exactly whenever the circle already has an answer), and pinned at
-    this app's own 180 degree Angle maximum for FAR < 1, where
+    this app's own maximum arc angle for FAR < 1, where
     arc_from_far has no solution at all -- a venue wider than it is deep
     needs (up to) the fullest spread this app allows; it's
     ellipse_ratio_from_far's shrinking ratio that actually adapts the
     bow depth to just how wide. Continuous at FAR = 1: arc_from_far(1)
-    is already exactly 180 degrees, matching the pinned branch below it."""
+    is already exactly MAX_ARC_ANGLE_DEG, matching the pinned branch below it."""
     if far is None or far <= 0:
         return None
     if far >= 1.0:
         return arc_from_far(far)
-    return 180.0
+    return MAX_ARC_ANGLE_DEG
 
 
 def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: float = 1.0):
@@ -542,7 +561,7 @@ def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: flo
     center_gap = (gaps - 1) / 2.0
     # Per-gap weight: 1.0 at the edges, `ratio` at the center gap(s),
     # linearly interpolated in between by how close each gap is to center.
-    half_span = max(center_gap, 1e-9)
+    half_span = center_gap
     weights = [1.0 + (ratio - 1.0) * (1.0 - abs(g - center_gap) / half_span) for g in range(gaps)]
     total_weight = sum(weights)
     d_phis = [angle_deg * w / total_weight for w in weights]
@@ -558,9 +577,7 @@ def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: flo
 
     out = []
     for phi_deg in phis_deg:
-        phi = math.radians(phi_deg)
-        lateral = radius_m * math.sin(phi)
-        depth = -radius_m * (1.0 - math.cos(phi))
+        depth, lateral = _arc_point(radius_m, phi_deg)
         out.append((depth, lateral, phi_deg))
     return out
 
@@ -569,7 +586,7 @@ def forward_aspect_ratio(angle_deg: float):
     """FAR = 1 / sin(angle/2) -- the depth:width ratio McCarthy/S.A.D. use to
     characterize an arc's coverage angle. Undefined (returns None) at 0 deg."""
     s = math.sin(math.radians(angle_deg) / 2.0)
-    return None if s == 0 else 1.0 / s
+    return None if abs(s) <= 1e-9 else 1.0 / s
 
 
 def far_from_venue(length_m: float, width_m: float):
@@ -651,24 +668,36 @@ not something the curve needs to account for.)"""
 def gain_db_to_osc(gain_db) -> float:
     """dB -> normalized 0.0-1.0 OSC fader value, calibrated to 1.0 = +18 dB,
     ~0.778 = 0 dB (unity): dB = 165*log10(x) + 18, so x = 10^((dB-18)/165).
-    None, -inf, or anything at/below the -144 dB floor maps to exactly
-    0.0; the result is clamped to [0, 1] above +18 dB."""
-    if gain_db is None or gain_db == float("-inf") or gain_db <= GAIN_OSC_FLOOR_DB:
+    None, -inf, NaN, or anything at/below the -144 dB floor maps to exactly
+    0.0; the result is clamped to [0, 1]."""
+    if gain_db is None or math.isnan(gain_db) or gain_db <= GAIN_OSC_FLOOR_DB:
         return 0.0
-    x = 10.0 ** ((gain_db - GAIN_OSC_MAX_DB) / GAIN_OSC_SLOPE)
-    return max(0.0, min(1.0, x))
+    if gain_db >= GAIN_OSC_MAX_DB:
+        return 1.0
+    return 10.0 ** ((gain_db - GAIN_OSC_MAX_DB) / GAIN_OSC_SLOPE)
 
 
 def osc_to_gain_db(x: float) -> float:
-    """Inverse of gain_db_to_osc. 0.0 maps to the -144 dB floor, matching
-    how the real box reports it -- not literal -inf."""
-    if x <= 0:
+    """Inverse of gain_db_to_osc. 0.0, None, NaN, or anything <= 0 maps to
+    the -144 dB floor, matching how the real box reports it -- not -inf."""
+    if x is None or math.isnan(x) or x <= 0:
         return GAIN_OSC_FLOOR_DB
     return GAIN_OSC_SLOPE * math.log10(min(1.0, x)) + GAIN_OSC_MAX_DB
 
 
 def manual(n: int, delays_ms, gains_db, polarities) -> list[SubOutput]:
     return [SubOutput(i + 1, delays_ms[i], gains_db[i], polarities[i]) for i in range(n)]
+
+
+def _focus_delays_ms(n: int, spacing_m: float, x_m: float, y_m: float, speed_mps: float) -> list[float]:
+    """Delay, ms, for n elements to focus at point (x_m, y_m) via
+    time-alignment -- shared core of focus_point and avoid_point."""
+    if n <= 0:
+        return []
+    lateral = sub_positions_centered(n, spacing_m)
+    distances = [math.hypot(x_m, y_m - pos_y) for pos_y in lateral]
+    max_d = max(distances)
+    return [delay_ms_for_distance(max_d - d, speed_mps) for d in distances]
 
 
 def focus_point(n: int, spacing_m: float, focus_x_m: float, focus_y_m: float,
@@ -689,14 +718,9 @@ def focus_point(n: int, spacing_m: float, focus_x_m: float, focus_y_m: float,
     near-field beamforming/focusing, not a S.A.D. topology -- this app's
     own extension, verifiable directly from geometry (no tutorial ground
     truth needed: it's exact by construction, not an approximation)."""
-    trims = gain_trim_db or [0.0] * n
-    if n <= 0:
-        return []
-    lateral = sub_positions_centered(n, spacing_m)
-    distances = [math.hypot(focus_x_m, focus_y_m - y) for y in lateral]
-    max_d = max(distances)
-    return [SubOutput(i + 1, (max_d - distances[i]) / speed_mps * 1000.0, trims[i], False)
-            for i in range(n)]
+    trims = _trims(gain_trim_db, n)
+    delays_ms = _focus_delays_ms(n, spacing_m, focus_x_m, focus_y_m, speed_mps)
+    return [SubOutput(i + 1, delays_ms[i], trims[i], False) for i in range(n)]
 
 
 def avoid_point(n: int, spacing_m: float, avoid_x_m: float, avoid_y_m: float,
@@ -738,13 +762,10 @@ def avoid_point(n: int, spacing_m: float, avoid_x_m: float, avoid_y_m: float,
     floor -- cross-check a heavy reliance on this against measurement or
     a prediction tool, same advice as the taper cost readout gives for
     heavy tapers."""
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     if n <= 0:
         return []
-    lateral = sub_positions_centered(n, spacing_m)
-    distances = [math.hypot(avoid_x_m, avoid_y_m - y) for y in lateral]
-    max_d = max(distances)
-    delays_ms = [(max_d - d) / speed_mps * 1000.0 for d in distances]
+    delays_ms = _focus_delays_ms(n, spacing_m, avoid_x_m, avoid_y_m, speed_mps)
 
     n_normal = (n + 1) // 2
     n_reversed = n // 2
@@ -914,18 +935,34 @@ fixed rather than exposed as a second UI parameter (matches SciPy's and
 MATLAB's own default), so Taylor only needs the same one sidelobe-level
 (dB) control Chebyshev does."""
 
+_TAPER_FLOOR_LINEAR = 1e-9
+"""Floor for log operations in level_taper_db: -180 dB."""
+
+_COSINE_SUM_COEFFS = {
+    "Hann": (0.5, 0.5),
+    "Hamming": (0.54, 0.46),
+    "Blackman": (0.42, 0.5, 0.08),
+    "Blackman-Harris": (0.35875, 0.48829, 0.14128, 0.01168),
+    "Nuttall": (0.355768, 0.487396, 0.144232, 0.012604),
+    "Flat Top": (0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368),
+}
+"""Cosine-sum window coefficients: a[0] + a[1]*cos(pi*u) + a[2]*cos(2*pi*u) + ..."""
+
+MAX_ARC_ANGLE_DEG = 180.0
+"""Maximum arc angle, degrees -- venues wider than they are deep use Ellipse mode."""
+
 
 def _dft_real(seq) -> list[float]:
     """Real part of the DFT of a complex sequence (X[k] = sum_m
-    seq[m]*exp(-2j*pi*k*m/n)), by direct summation -- O(n^2), fine for
-    this app's element counts (<= 48). No numpy/scipy dependency; used
-    only by _chebyshev_weights' frequency-sampling construction."""
+    seq[m]*exp(-2j*pi*k*m/n)), by direct summation with precomputed twiddle
+    factors -- O(n^2) but with reduced constant factor. No numpy/scipy
+    dependency; used only by _chebyshev_weights' frequency-sampling
+    construction."""
     n = len(seq)
+    tw = [cmath.exp(-2j * math.pi * t / n) for t in range(n)]
     out = []
     for k in range(n):
-        s = 0j
-        for m in range(n):
-            s += seq[m] * cmath.exp(-2j * math.pi * k * m / n)
+        s = sum(seq[m] * tw[(k * m) % n] for m in range(n))
         out.append(s.real)
     return out
 
@@ -985,7 +1022,7 @@ def _taylor_weights(n: int, sidelobe_db: float, nbar: int = _TAYLOR_NBAR) -> lis
     D.2 for the reference algorithm."""
     if n <= 1:
         return [1.0] * n
-    b = 10.0 ** (sidelobe_db / 20.0)
+    b = 10.0 ** (abs(sidelobe_db) / 20.0)
     a = math.acosh(b) / math.pi
     s2 = nbar ** 2 / (a ** 2 + (nbar - 0.5) ** 2)
     ma = list(range(1, nbar))
@@ -1025,26 +1062,13 @@ def _window_shape(u: float, window: str) -> float:
     the window off the array's physical middle for steered_window_weights."""
     if window == "Uniform":
         return 1.0
-    if window == "Hann":
-        return 0.5 + 0.5 * math.cos(math.pi * u)
-    if window == "Hamming":
-        return 0.54 + 0.46 * math.cos(math.pi * u)
-    if window == "Blackman":
-        return 0.42 + 0.5 * math.cos(math.pi * u) + 0.08 * math.cos(2 * math.pi * u)
     if window == "Bartlett":
         return 1.0 - abs(u)
     if window == "Welch":
         return 1.0 - u * u
-    if window == "Blackman-Harris":
-        a0, a1, a2, a3 = 0.35875, 0.48829, 0.14128, 0.01168
-        return a0 + a1 * math.cos(math.pi * u) + a2 * math.cos(2 * math.pi * u) + a3 * math.cos(3 * math.pi * u)
-    if window == "Nuttall":
-        a0, a1, a2, a3 = 0.355768, 0.487396, 0.144232, 0.012604
-        return a0 + a1 * math.cos(math.pi * u) + a2 * math.cos(2 * math.pi * u) + a3 * math.cos(3 * math.pi * u)
-    if window == "Flat Top":
-        a0, a1, a2, a3, a4 = 0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368
-        return (a0 + a1 * math.cos(math.pi * u) + a2 * math.cos(2 * math.pi * u)
-                + a3 * math.cos(3 * math.pi * u) + a4 * math.cos(4 * math.pi * u))
+    if window in _COSINE_SUM_COEFFS:
+        coeffs = _COSINE_SUM_COEFFS[window]
+        return sum(a * math.cos(k * math.pi * u) for k, a in enumerate(coeffs))
     raise ValueError(f"unknown window: {window!r}")
 
 
@@ -1112,20 +1136,20 @@ def steered_window_weights(n: int, window: str, center_index: float,
     see _interp_shape."""
     if n <= 1:
         return [1.0] * n
+    center_index = max(0.0, min(float(n - 1), center_index))
     if window in PARAMETRIC_TAPER_WINDOWS:
         base = window_weights(n, window, sidelobe_db)
-        shape = lambda u: _interp_shape(base, u)
+        def shape(u):
+            return _interp_shape(base, u)
     else:
-        shape = lambda u: _window_shape(u, window)
+        def shape(u):
+            return _window_shape(u, window)
     left_span = center_index
     right_span = (n - 1) - center_index
     out = []
     for i in range(n):
-        if i <= center_index:
-            u = (i - center_index) / left_span if left_span > 0 else 0.0
-        else:
-            u = (i - center_index) / right_span if right_span > 0 else 0.0
-        out.append(shape(u))
+        span = left_span if i <= center_index else right_span
+        out.append(shape((i - center_index) / span if span > 0 else 0.0))
     return out
 
 
@@ -1184,19 +1208,25 @@ def level_taper_db(n: int, window: str, max_atten_db: float, center_index: float
     applies via steered_window_weights' interpolated re-centering (see
     its docstring) -- steering trades away that exact-at-center-position
     guarantee the same way it does for every other window here."""
-    if window in PARAMETRIC_TAPER_WINDOWS:
-        w = (window_weights(n, window, sidelobe_db) if center_index is None
-             else steered_window_weights(n, window, center_index, sidelobe_db))
-        peak = max(w) if w else 1.0
-        if peak <= 0:
-            return [0.0] * n
-        return [20.0 * math.log10(max(wi, 1e-9) / peak) for wi in w]
-    w = (window_weights(n, window) if center_index is None
-         else steered_window_weights(n, window, center_index))
-    peak = max(w) if w else 1.0
+    parametric = window in PARAMETRIC_TAPER_WINDOWS
+    args = (sidelobe_db,) if parametric else ()
+    w = (window_weights(n, window, *args) if center_index is None
+         else steered_window_weights(n, window, center_index, *args))
+    peak = max(w, default=0.0)
     if peak <= 0:
         return [0.0] * n
+    if parametric:
+        return [20.0 * math.log10(max(wi / peak, _TAPER_FLOOR_LINEAR)) for wi in w]
     return [-max_atten_db * (1.0 - wi / peak) for wi in w]
+
+
+def _mean_linear_db(gains_db: list[float], per_decade: float) -> float:
+    """Mean of linear gains (per_decade=20 for amplitude, 10 for power),
+    returned as dB. Shared by taper_onaxis_loss_db and taper_power_loss_db."""
+    if not gains_db:
+        return 0.0
+    mean_lin = sum(10.0 ** (g / per_decade) for g in gains_db) / len(gains_db)
+    return per_decade * math.log10(mean_lin) if mean_lin > 0 else float("-inf")
 
 
 def taper_onaxis_loss_db(gain_trim_db: list[float]) -> float:
@@ -1217,13 +1247,7 @@ def taper_onaxis_loss_db(gain_trim_db: list[float]) -> float:
     still costing you an amplifier channel and a box, contributing less
     toward the front. 0.0 for Uniform / 0 dB max atten (every element
     still at unity)."""
-    if not gain_trim_db:
-        return 0.0
-    lin = [10.0 ** (g / 20.0) for g in gain_trim_db]
-    mean_lin = sum(lin) / len(lin)
-    if mean_lin <= 0:
-        return float("-inf")
-    return 20.0 * math.log10(mean_lin)
+    return _mean_linear_db(gain_trim_db, 20.0)
 
 
 def taper_power_loss_db(gain_trim_db: list[float]) -> float:
@@ -1242,13 +1266,7 @@ def taper_power_loss_db(gain_trim_db: list[float]) -> float:
     SPL than it costs total radiated power, because some of an
     untapered element's power would only have gone into sidelobes
     anyway."""
-    if not gain_trim_db:
-        return 0.0
-    lin = [10.0 ** (g / 10.0) for g in gain_trim_db]
-    mean_lin = sum(lin) / len(lin)
-    if mean_lin <= 0:
-        return float("-inf")
-    return 10.0 * math.log10(mean_lin)
+    return _mean_linear_db(gain_trim_db, 10.0)
 
 
 @dataclass
@@ -1306,11 +1324,11 @@ def floor_bounce(source_height_m: float, mic_distance_m: float, mic_height_m: fl
     bounce = math.hypot(x1, source_height_m) + math.hypot(x2, mic_height_m)
     diff = bounce - direct
 
-    if diff <= 0:
+    if diff <= 1e-9:
         return FloorBounceResult(direct, bounce, diff, 0.0)
 
     time_diff_ms = diff / speed_mps * 1000.0
     peak_hz = 1000.0 / time_diff_ms
     null_hz = peak_hz / 2.0
-    bounce_level_db = 20.0 * math.log10(direct / bounce) if bounce > 0 else 0.0
+    bounce_level_db = 20.0 * math.log10(direct / bounce)
     return FloorBounceResult(direct, bounce, diff, time_diff_ms, peak_hz, null_hz, bounce_level_db)

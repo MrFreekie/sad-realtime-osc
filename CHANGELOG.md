@@ -3,6 +3,31 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.9.3] - 2026-09-29
+Added: **Makeup Gain** button (with **Clear**) in the Level taper panel.
+Adds the current on-axis taper cost (`taper_onaxis_loss_db`) to Group level
+as positive gain, to win back the forward level the taper gave up. Tracked
+separately from any Group level typed by hand (orange "includes +X dB
+makeup" note), so clicking again replaces its own previous contribution
+instead of stacking and Clear removes exactly that amount. A snapshot, not
+live: re-click after changing the taper. Result is clamped to Group
+level's -40..+18 dB range. Saved in `.sadrt` files as `group.makeup_db`
+(missing in older files = 0).
+
+Fixed (`array_math.py`): `gain_db_to_osc` / `osc_to_gain_db` now map NaN to
+the floor (0.0 / -144 dB) instead of full-scale, and no longer overflow on
+huge dB values; Taylor window accepts a negative sidelobe value like
+Chebyshev does; `pressure_at_altitude_pa` clamps instead of returning a
+complex number at extreme altitude; `floor_bounce`, `forward_aspect_ratio`
+and arc radius use a tolerance instead of an exact-zero test;
+`steered_window_weights` clamps `center_index` to [0, n-1].
+
+Changed (`array_math.py`, no behaviour change intended): consolidated
+duplicated code -- cosine-sum window coefficients table, shared
+`_arc_point` geometry, `_focus_delays_ms` (Focus/Avoid Point),
+`_trims`, `_mean_linear_db` (taper loss), `level_taper_db` branching,
+and precomputed DFT twiddle factors.
+
 ## [0.9.2] - 2026-09-21
 Changed: renamed the **Live** tab to **Design**, and split the three-tab
 layout (Live / OSC / Setup) into four: **Design** (Array, Topology

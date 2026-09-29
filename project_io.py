@@ -100,6 +100,7 @@ def build_project_dict(app) -> dict:
             "delay_ms": app.group_delay.get(),
             "inverted": app._group_inverted(),
             "level_db": app.group_level.get(),
+            "makeup_db": app.makeup_contribution_db,
             "prealign": {
                 "active": app.prealign_active,
                 "contribution_ms": app.prealign_contribution_ms,
@@ -373,6 +374,12 @@ def apply_project_dict(app, data: dict) -> list[str]:
         app.group_level.set(value)
         if clamped:
             warnings.append("Group level out of range -- clamped.")
+    try:
+        app.makeup_contribution_db = float(group.get("makeup_db", 0.0))
+    except (TypeError, ValueError):
+        app.makeup_contribution_db = 0.0
+    if hasattr(app, "makeup_note_var"):
+        app._update_makeup_note()
 
     prealign = group.get("prealign") if isinstance(group.get("prealign"), dict) else {}
     app.prealign_active = bool(prealign.get("active", False))

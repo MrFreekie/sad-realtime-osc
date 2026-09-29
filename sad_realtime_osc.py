@@ -24,7 +24,7 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.9.2"
+__version__ = "0.9.3"
 
 import ctypes
 import os
@@ -236,6 +236,8 @@ class App(tk.Tk):
         self._length_fields = []
         self.unit = tk.StringVar(value="m")
         self.prealign_contribution_ms = 0.0
+        self.makeup_contribution_db = 0.0
+        self._last_taper_onaxis_db = 0.0
         self.prealign_active = False
         self.prealign_note_var = tk.StringVar(value="")
         self.project_name = tk.StringVar(value="")
@@ -906,6 +908,57 @@ class App(tk.Tk):
                  "benefit this app can't show you (no polar/SPL prediction) -- worth cross-checking "
                  "against a prediction tool before committing a show to a heavy taper.")
 
+        ttk.Button(frm, text="Makeup Gain", command=self._apply_makeup_gain).grid(
+            row=2, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        ttk.Button(frm, text="Clear", width=6, command=self._clear_makeup_gain).grid(
+            row=2, column=1, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self.makeup_note_var = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.makeup_note_var, foreground="#c60", font=("Segoe UI", 8)).grid(
+            row=2, column=2, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self._help_icon(
+            frm, row=2, col=4,
+            text="Adds a gain correction to Group level equal to the on-axis taper cost shown above, "
+                 "to win back the forward level the taper gave up. Added on top of whatever Group level "
+                 "you already have, tracked separately (see the orange note) so clicking again replaces "
+                 "its own previous contribution instead of stacking, and Clear removes exactly that "
+                 "amount. It's a snapshot: if you change the taper afterwards, click Makeup Gain again "
+                 "to refresh it. Group level is clamped to its -40..+18 dB range. Watch amplifier and "
+                 "DSP headroom -- this raises every sub by that amount, including the ones the taper "
+                 "attenuated least.")
+        self._update_makeup_note()
+
+    def _update_makeup_note(self):
+        if abs(self.makeup_contribution_db) < 0.005:
+            self.makeup_note_var.set("")
+        else:
+            sign = "+" if self.makeup_contribution_db >= 0 else ""
+            self.makeup_note_var.set(f"includes {sign}{self.makeup_contribution_db:.2f} dB makeup in Group level")
+
+    def _apply_makeup_gain(self):
+        if self.topology.get() not in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) \
+                and self.topology.get() not in ARC_HYBRID_TOPOLOGIES:
+            return
+        try:
+            base = self.group_level.get() - self.makeup_contribution_db
+        except tk.TclError:
+            return
+        target = max(-40.0, min(18.0, base - self._last_taper_onaxis_db))
+        self.group_level.set(round(target, 2))
+        self.makeup_contribution_db = round(target, 2) - base
+        self._update_makeup_note()
+        self._on_change()
+
+    def _clear_makeup_gain(self):
+        if self.makeup_contribution_db == 0.0:
+            return
+        try:
+            self.group_level.set(round(self.group_level.get() - self.makeup_contribution_db, 2))
+        except tk.TclError:
+            pass
+        self.makeup_contribution_db = 0.0
+        self._update_makeup_note()
+        self._on_change()
+
     def _on_taper_window_change(self):
         """Chebyshev/Taylor need a Sidelobe (dB) parameter instead of Max
         atten -- swap which one shows in that grid cell before re-syncing
@@ -955,6 +1008,7 @@ class App(tk.Tk):
                     self.trim_vars[j].set(round(db, 2))
         onaxis = taper_onaxis_loss_db(taper)
         power = taper_power_loss_db(taper)
+        self._last_taper_onaxis_db = onaxis
         self.taper_cost_label.config(
             text=f"taper cost: {onaxis:.2f} dB on-axis, {power:.2f} dB total power (vs. uniform)")
 
