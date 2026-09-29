@@ -238,6 +238,7 @@ class App(tk.Tk):
         self.unit = tk.StringVar(value="m")
         self.prealign_contribution_ms = 0.0
         self.makeup_contribution_db = 0.0
+        self._makeup_group_level = 0.0
         self._last_taper_onaxis_db = 0.0
         self.prealign_active = False
         self.prealign_note_var = tk.StringVar(value="")
@@ -935,28 +936,43 @@ class App(tk.Tk):
             sign = "+" if self.makeup_contribution_db >= 0 else ""
             self.makeup_note_var.set(f"includes {sign}{self.makeup_contribution_db:.2f} dB makeup in Group level")
 
+    def _drop_stale_makeup(self):
+        """Group level edited by hand (or by a load) since Makeup Gain set
+        it: the tracked contribution no longer describes what's in it, so
+        forget it rather than subtract a phantom amount on the next
+        click/Clear. Returns the current Group level, or None if unreadable."""
+        try:
+            level = self.group_level.get()
+        except tk.TclError:
+            return None
+        if self.makeup_contribution_db != 0.0 and abs(level - self._makeup_group_level) > 0.005:
+            self.makeup_contribution_db = 0.0
+            self._update_makeup_note()
+        return level
+
     def _apply_makeup_gain(self):
         if self.topology.get() not in (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) \
                 and self.topology.get() not in ARC_HYBRID_TOPOLOGIES:
             return
-        try:
-            base = self.group_level.get() - self.makeup_contribution_db
-        except tk.TclError:
+        level = self._drop_stale_makeup()
+        if level is None:
             return
-        target = max(-40.0, min(18.0, base - self._last_taper_onaxis_db))
-        self.group_level.set(round(target, 2))
-        self.makeup_contribution_db = round(target, 2) - base
+        base = level - self.makeup_contribution_db
+        target = round(max(-40.0, min(18.0, base - self._last_taper_onaxis_db)), 2)
+        self.group_level.set(target)
+        self.makeup_contribution_db = target - base
+        self._makeup_group_level = target
         self._update_makeup_note()
         self._on_change()
 
     def _clear_makeup_gain(self):
-        if self.makeup_contribution_db == 0.0:
+        level = self._drop_stale_makeup()
+        if level is None or self.makeup_contribution_db == 0.0:
             return
-        try:
-            self.group_level.set(round(self.group_level.get() - self.makeup_contribution_db, 2))
-        except tk.TclError:
-            pass
+        target = round(level - self.makeup_contribution_db, 2)
+        self.group_level.set(target)
         self.makeup_contribution_db = 0.0
+        self._makeup_group_level = target
         self._update_makeup_note()
         self._on_change()
 
@@ -2435,6 +2451,7 @@ class App(tk.Tk):
         self._on_topology_change()
 
     def _on_change(self, *_):
+        self._drop_stale_makeup()
         if self.topology.get() == TOPO_MANUAL:
             # X/Y convention can flip which column is depth without a topology
             # change firing (no _on_topology_change(), which would blow away

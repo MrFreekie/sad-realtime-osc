@@ -21,6 +21,13 @@ docstring now say so. Note the Level taper's peak (`arc_steered_aim_index`)
 follows the minimum-delay element, i.e. the opposite side from where the
 beam aims.
 
+Fixed: **Makeup Gain** went stale if Group level was edited by hand after
+clicking it -- the tracked amount was still treated as included, so a later
+click could do nothing and Clear could push Group level negative. It now
+remembers the exact Group level it set and forgets its contribution (and
+clears the orange note) as soon as Group level differs, including after a
+project load.
+
 Changed: `array_math._arc_radius_m` factored out of `_arc_column_delays_s`
 (delays verified identical).
 

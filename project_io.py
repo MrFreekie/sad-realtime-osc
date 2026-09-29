@@ -383,6 +383,7 @@ def apply_project_dict(app, data: dict) -> list[str]:
         app.makeup_contribution_db = float(group.get("makeup_db", 0.0))
     except (TypeError, ValueError):
         app.makeup_contribution_db = 0.0
+    app._makeup_group_level = app.group_level.get()
     if hasattr(app, "makeup_note_var"):
         app._update_makeup_note()
 
