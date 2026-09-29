@@ -225,6 +225,7 @@ class App(tk.Tk):
         self.resizable(True, True)
 
         self.osc_client = None
+        self._osc_target = None
         self._last_sent = {}
         self._last_sent_indices = set()
         self.trim_vars = []
@@ -1984,7 +1985,7 @@ class App(tk.Tk):
 
         self.live_send = tk.BooleanVar(value=False)
         ttk.Checkbutton(frm, text="Live send", variable=self.live_send,
-                         command=self._apply_osc_settings).grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+                         command=self._on_live_toggle).grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Apply / Reconnect", command=self._apply_osc_settings).grid(
             row=1, column=1, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         ttk.Button(frm, text="Send Now", command=self._send_now).grid(
@@ -1995,25 +1996,68 @@ class App(tk.Tk):
             row=1, column=4, columnspan=2, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
 
     def _apply_osc_settings(self):
+        """Snapshots host/port/prefix into self._osc_target -- what _send_osc
+        and the status line use from here on, so editing a field without
+        pressing Apply can't change where (or under which addresses)
+        values are being streamed."""
         try:
-            self.osc_client = SimpleUDPClient(self.osc_host.get(), int(self.osc_port.get()))
-            self._last_sent = {}  # new target -- send full state again, not just deltas
-            self._last_sent_indices = set()
-            self.osc_status.set(f"ready → {self.osc_host.get()}:{self.osc_port.get()}")
-        except Exception as e:
-            self.osc_client = None
+            host = self.osc_host.get().strip()
+            port = int(self.osc_port.get())
+            prefix = self.osc_prefix.get().strip().rstrip("/")
+            if not host:
+                raise ValueError("host is empty")
+            if not 1 <= port <= 65535:
+                raise ValueError("port must be 1-65535")
+            if not prefix.startswith("/"):
+                raise ValueError("address prefix must start with '/'")
+            client = SimpleUDPClient(host, port)
+        except (tk.TclError, ValueError, OSError) as e:
+            self._close_osc_client()
             self.osc_status.set(f"error: {e}")
+            return False
+        self._close_osc_client()
+        self.osc_client = client
+        self._osc_target = (host, port, prefix)
+        self._last_sent = {}  # new target -- send full state again, not just deltas
+        self._last_sent_indices = set()
+        self.osc_status.set(f"ready → {host}:{port}")
+        return True
+
+    def _close_osc_client(self):
+        sock = getattr(self.osc_client, "_sock", None)
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        self.osc_client = None
+        self._osc_target = None
+
+    def _on_live_toggle(self):
+        if not self.live_send.get():
+            self.osc_status.set("live send off")
+            return
+        if self.osc_client is None and not self._apply_osc_settings():
+            self.live_send.set(False)
+            return
+        subs = self._compute()
+        if subs is not None:
+            self._send_osc(subs, force=True)
 
     def _send_now(self):
-        if self.osc_client is None:
-            self._apply_osc_settings()
-        self._send_osc(self._compute(), force=True)
+        if self.osc_client is None and not self._apply_osc_settings():
+            return
+        subs = self._compute()
+        if subs is None:
+            self.osc_status.set("not sent: a field has an invalid value")
+            return
+        self._send_osc(subs, force=True)
 
     def _send_osc(self, subs, force=False):
-        if self.osc_client is None:
+        if self.osc_client is None or self._osc_target is None:
             return
+        host, port, prefix = self._osc_target
         try:
-            prefix = self.osc_prefix.get().rstrip("/")
             group_delay = self.group_delay.get()
             group_level = self.group_level.get()
             group_inverted = self._group_inverted()
@@ -2053,7 +2097,7 @@ class App(tk.Tk):
                         self.osc_client.send_message(address, value)
                         self._last_sent[address] = value
                         sent += 1
-            self.osc_status.set(f"sent {sent}/{total} values @ {self.osc_host.get()}:{self.osc_port.get()}")
+            self.osc_status.set(f"sent {sent}/{total} values @ {host}:{port}")
         except Exception as e:
             self.osc_status.set(f"send error: {e}")
 
@@ -2319,13 +2363,27 @@ class App(tk.Tk):
         }
         self.topology_note_icon.tooltip.text = notes[topo]
 
-        n = self.count.get() * (2 if (is_gradient or is_hybrid) else 1)
+        try:
+            n = self.count.get() * (2 if (is_gradient or is_hybrid) else 1)
+        except tk.TclError:
+            return
         self._rebuild_rows(n, editable_all=is_manual)
         self._update_venue_far()  # its "arc" readout depends on topology/Shape now (Ellipse's FAR<1 case)
         self._on_change()
         self._fit_window_height()
 
     def _on_count_change(self):
+        # FocusOut/Return fire even when the count didn't change; a full
+        # rebuild then recreates the row vars and wipes typed Manual values.
+        try:
+            rows = self.count.get()
+        except tk.TclError:
+            return
+        topo = self.topology.get()
+        if topo == TOPO_GRADIENT or topo in ARC_HYBRID_TOPOLOGIES:
+            rows *= 2
+        if rows == len(self.trim_vars):
+            return
         self._on_topology_change()
 
     def _on_shape_change(self):
@@ -2350,20 +2408,25 @@ class App(tk.Tk):
         self._update_collision_check()
         self._sync_level_taper()
         subs = self._compute()
-        self._update_table(subs)
+        if subs is not None:
+            self._update_table(subs)
         if self.topology.get() in ANGLE_TOPOLOGIES:
             # FAR is a pure function of Angle regardless of topology, but this
             # readout used to only refresh for TOPO_ARC specifically -- stale
             # (or blank) on Physical Horizontal Array, Progressive Arc, and
             # both Arc Hybrids ever since the FAR label itself was extended to
             # show for all of ANGLE_TOPOLOGIES, not just Arc / Broadside Steering.
-            far = forward_aspect_ratio(self.angle.get())
-            self.far_label.config(text=f"FAR: {far:.2f}" if far is not None else "FAR: ∞")
+            try:
+                far = forward_aspect_ratio(self.angle.get())
+                self.far_label.config(text=f"FAR: {far:.2f}" if far is not None else "FAR: ∞")
+            except tk.TclError:
+                pass
         self._update_wavelength_readouts()
         self._update_info_panel()
-        if self.live_send.get():
-            if self.osc_client is None:
-                self._apply_osc_settings()
+        if self.live_send.get() and subs is not None:
+            if self.osc_client is None and not self._apply_osc_settings():
+                self.live_send.set(False)
+                return
             self._send_osc(subs)
 
     def _update_wavelength_readouts(self):
@@ -2456,8 +2519,11 @@ class App(tk.Tk):
                 pols = [v.get() for v in self.manual_pol_vars]
                 delays = delays_from_depth(depths, self._speed_of_sound())
                 return manual(n, delays, gains, pols)
-        except (tk.TclError, ValueError):
-            return []
+        except (tk.TclError, ValueError, IndexError):
+            # None (not []) so callers can tell "a field is mid-edit/invalid"
+            # from "zero subs" -- treating the former as the latter used to
+            # mute every sub over OSC.
+            return None
         return []
 
     def _compute_positions(self):

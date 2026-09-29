@@ -225,6 +225,11 @@ def apply_project_dict(app, data: dict) -> list[str]:
     that's the whole point of a tolerant load path."""
     warnings = []
 
+    # Off before anything else changes: the topology/count handlers below
+    # each trigger an OSC send while live, which would stream half-loaded
+    # intermediate state to the old target.
+    app.live_send.set(False)
+
     def section(key):
         v = data.get(key)
         return v if isinstance(v, dict) else {}

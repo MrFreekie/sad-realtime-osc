@@ -14,6 +14,23 @@ live: re-click after changing the taper. Result is clamped to Group
 level's -40..+18 dB range. Saved in `.sadrt` files as `group.makeup_db`
 (missing in older files = 0).
 
+Fixed (live-show safety, `sad_realtime_osc.py` / `project_io.py`):
+- A half-typed or invalid field (empty Spinbox, "-" in a Manual X/Y entry)
+  no longer mutes every sub over OSC. `_compute` returns `None` on failure
+  and `_on_change` then skips the table update and the OSC send, instead of
+  treating it as "zero subs" and sending the silent state to every sub.
+- Loading a project (or New) with Live send on no longer streams half-loaded
+  intermediate state: Live send is switched off first.
+- Tabbing through the Subs field without changing it no longer rebuilds the
+  rows and wipes typed Manual positions/gains; an empty count no longer raises.
+- OSC host, port and address prefix are snapshotted on Apply / Reconnect and
+  used for sending and the status line, so editing a field without Apply
+  can't change where or under which addresses values stream. Apply validates
+  the port (1-65535), host, and that the prefix starts with `/`, and closes
+  the old socket. The Live send checkbox now connects if needed, sends the
+  full state on enable, and switches itself back off if the settings are
+  invalid. Note: editing the prefix now needs Apply / Reconnect to take effect.
+
 Fixed (`array_math.py`): `gain_db_to_osc` / `osc_to_gain_db` now map NaN to
 the floor (0.0 / -144 dB) instead of full-scale, and no longer overflow on
 huge dB values; Taylor window accepts a negative sidelobe value like
