@@ -173,8 +173,12 @@ python sad_realtime_osc.py
   (bow depth) of its own position on that arc, divided by the speed of
   sound (`arc_steering` in `array_math.py`). Checked against S.A.D.'s own
   tutorial (10 elements, 0.94 m spacing, 71° arc → delay 3.77/2.27/1.14/
-  0.38/0.00 ms edge to centre, mirrored) to within ~0.07 ms — consistent
-  with the tutorial's displayed inputs themselves being rounded. Shows a
+  0.38/0.00 ms edge to centre, mirrored): the profile shape matches, but at
+  c = 343 m/s the numbers come out 3.66/2.22/1.12/0.38/0.00, up to ~0.11 ms
+  (3 %) below the tutorial at the edge. The tutorial's rounded inputs alone
+  only reach ~3.70 ms; it most likely used c ≈ 340 m/s (which, with 0.945 m
+  / 71.5°, lands within 0.04 ms everywhere). Its own c and exact inputs
+  aren't known, so it's unverified beyond the shape. Shows a
   live FAR (Forward Aspect Ratio) readout, `FAR = 1/sin(arc/2)` —
   verified against S.A.D.'s own manual (arc 60° → FAR 2.00, exact).
   **Steer (°)** (-90 to +90, default 0) redirects the whole arc's aim
@@ -252,7 +256,11 @@ python sad_realtime_osc.py
   Ellipse above) but with a non-uniform angular step between adjacent
   elements instead of a constant one — a "J-array"-style progressive
   spread. A **Progression** ratio (1.0–8.0, default 1.0) sets the
-  center:edge angular-step ratio: 1.0 reproduces Physical Horizontal
+  center:edge angular-step ratio -- the center-most gap(s) get exactly
+  that multiple of the edge gaps' step, for any odd or even element count
+  from 4 up (with 3 elements there are only two gaps, each both centre and
+  edge, so there's nothing to progress; earlier versions fell short of the
+  stated ratio for even gap counts). 1.0 reproduces Physical Horizontal
   Array exactly (uniform steps, verified against its own tutorial data
   the same way); above 1.0 the center gap(s) widen (tighter curvature
   there) and the edge gaps narrow proportionally (flatter, longer throw
@@ -907,7 +915,10 @@ delay model is an arc's sagitta profile rather than true point-source
 distances — e.g. 10 elements, 0.94 m, 71° arc → about 6.4 m behind, fit error
 about 7 mm; the readout adds "(rough fit)" when the error exceeds 5 % of the
 distance (a wide arc with heavy Steer). Arc angle 0° is a flat line: source at
-infinity. Hybrids use column geometry only (front/rear row offset ignored).
+infinity, and a very steered or very wide arc whose delays are close to a
+plane wave reads "at infinity" or "no reliable point-source fit" instead of a
+meaningless distance. Hybrids use column geometry only (front/rear row
+offset ignored).
 No S.A.D. ground truth to check it against, and not sent over OSC.
 
 ## OSC output
@@ -960,8 +971,10 @@ top of the Design tab.
 
 **New** resets every setting on screen to factory defaults — same
 confirmation-then-full-reset shape as Load, just with built-in defaults
-instead of a file (`project_io.default_project_dict()`, pushed through the
-same `apply_project_dict` used by Load, so there's one reset code path).
+instead of a file (the app's own freshly-built starting state, captured at
+launch as `App._factory_defaults` so it can't drift from the real defaults,
+pushed through the same `apply_project_dict` used by Load, so there's one
+reset code path).
 Asks to confirm first, since anything unsaved is discarded. Turns off Live
 send and clears the current file path/name, same as opening a blank
 project would.

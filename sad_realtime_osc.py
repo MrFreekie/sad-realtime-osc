@@ -26,6 +26,7 @@ Run:
 """
 __version__ = "0.9.4"
 
+import copy
 import ctypes
 import os
 import tkinter as tk
@@ -237,6 +238,7 @@ class App(tk.Tk):
         self._length_fields = []
         self.unit = tk.StringVar(value="m")
         self.prealign_contribution_ms = 0.0
+        self._change_after_id = None
         self.makeup_contribution_db = 0.0
         self._makeup_group_level = 0.0
         self._last_taper_onaxis_db = 0.0
@@ -302,6 +304,9 @@ class App(tk.Tk):
         self._on_topology_change()
         self._update_venue_far()
         self._fit_window_height()
+        # What "New" resets to: the app's own freshly-built state, captured
+        # rather than re-typed in project_io, so the two can't drift apart.
+        self._factory_defaults = project_io.build_project_dict(self)
         # ttk widget metrics (e.g. the OSC panel's Host/Port/Address prefix
         # row) aren't always fully realized until after the first pass
         # through the event loop -- a single synchronous fit here can
@@ -419,7 +424,7 @@ class App(tk.Tk):
         if not messagebox.askyesno(
                 "New project", "Reset every setting to defaults? Anything unsaved will be lost."):
             return
-        project_io.apply_project_dict(self, project_io.default_project_dict())
+        project_io.apply_project_dict(self, copy.deepcopy(self._factory_defaults))
         self.project_path = None
         self.project_status_var.set("unsaved project")
 
@@ -711,7 +716,7 @@ class App(tk.Tk):
             self.spacing.set(round(float(value), 3))
         except (tk.TclError, ValueError):
             pass
-        self._on_change()
+        self._schedule_change()
 
     def _on_row_spacing_slider(self, value):
         """Same quantize-on-drag reasoning as _on_spacing_slider, for Row
@@ -720,7 +725,7 @@ class App(tk.Tk):
             self.row_spacing.set(round(float(value), 3))
         except (tk.TclError, ValueError):
             pass
-        self._on_change()
+        self._schedule_change()
 
     def _labeled_slider(self, parent, text, var, lo, hi, row, increment=0.1, decimals=None,
                          on_commit=None):
@@ -748,7 +753,10 @@ class App(tk.Tk):
                     var.set(round(float(v), decimals))
                 except (tk.TclError, ValueError):
                     pass
-            commit()
+            if on_commit is None:
+                self._schedule_change()
+            else:
+                commit()
 
         slider = ttk.Scale(parent, from_=lo, to=hi, orient="horizontal", variable=var,
                             command=on_slide)
@@ -2024,10 +2032,16 @@ class App(tk.Tk):
                         else "virtual source: at infinity (flat line, Arc angle 0°)")
             elif result is not False:
                 behind, offset, rms = result
-                side = ("on-axis" if abs(offset) < 0.005 else
-                        f"{abs(offset):.2f} m off-axis toward {unit} {n if offset > 0 else 1} end")
-                rough = " (rough fit)" if rms > 0.05 * behind else ""
-                text = f"virtual source: {behind:.2f} m behind array centre, {side}{rough}"
+                aperture = max((n - 1) * spacing, 0.001)
+                if behind > 500.0 or abs(offset) > 500.0:
+                    text = "virtual source: at infinity (delays are close to a plane wave)"
+                elif behind <= 0.05 or rms > 0.25 * aperture:
+                    text = "virtual source: no reliable point-source fit (arc/Steer too extreme)"
+                else:
+                    side = ("on-axis" if abs(offset) < 0.005 else
+                            f"{abs(offset):.2f} m off-axis toward {unit} {n if offset > 0 else 1} end")
+                    rough = " (rough fit)" if rms > 0.05 * behind else ""
+                    text = f"virtual source: {behind:.2f} m behind array centre, {side}{rough}"
         except tk.TclError:
             text = "virtual source: -"
         self.info_virtual_label.config(text=text)
@@ -2246,9 +2260,9 @@ class App(tk.Tk):
 
             if editable_all:
                 y_widget = ttk.Entry(self.table_frame, textvariable=self.manual_y_vars[i], width=8)
-                y_widget.bind("<KeyRelease>", lambda e: self._on_change())
+                y_widget.bind("<KeyRelease>", lambda e: self._schedule_change())
                 x_widget = ttk.Entry(self.table_frame, textvariable=self.manual_x_vars[i], width=8)
-                x_widget.bind("<KeyRelease>", lambda e: self._on_change())
+                x_widget.bind("<KeyRelease>", lambda e: self._schedule_change())
             else:
                 y_widget = ttk.Label(self.table_frame, text="0.00")
                 x_widget = ttk.Label(self.table_frame, text="0.00")
@@ -2271,7 +2285,7 @@ class App(tk.Tk):
 
             if editable_all:
                 gain_widget = ttk.Entry(self.table_frame, textvariable=self.manual_gain_vars[i], width=10)
-                gain_widget.bind("<KeyRelease>", lambda e: self._on_change())
+                gain_widget.bind("<KeyRelease>", lambda e: self._schedule_change())
             else:
                 # Read-only here -- for the computed topologies, trim is set via the
                 # Level taper panel's "Apply to Gain trim", not typed in the table.
@@ -2304,8 +2318,23 @@ class App(tk.Tk):
     # ------------------------------------------------------------- events --
     def _on_topology_change(self):
         topo = self.topology.get()
+        self._apply_topology_visibility(topo)
+        self._clamp_count_for_topology(topo)
+        self.topology_note_icon.tooltip.text = self._topology_note(topo)
+
+        try:
+            n = self.count.get() * (2 if (topo == TOPO_GRADIENT or topo in ARC_HYBRID_TOPOLOGIES) else 1)
+        except tk.TclError:
+            return
+        self._rebuild_rows(n, editable_all=topo == TOPO_MANUAL)
+        self._update_venue_far()  # its "arc" readout depends on topology/Shape now (Ellipse's FAR<1 case)
+        self._on_change()
+        self._fit_window_height()
+
+    def _apply_topology_visibility(self, topo):
+        """Shows/hides every topology-specific control and panel, and sets
+        the count label, for `topo`."""
         is_manual = topo == TOPO_MANUAL
-        is_arc = topo == TOPO_ARC
         is_physical = topo == TOPO_PHYSICAL
         is_gradient = topo == TOPO_GRADIENT
         is_hybrid = topo in ARC_HYBRID_TOPOLOGIES
@@ -2370,18 +2399,31 @@ class App(tk.Tk):
             self.venue_frame.pack_forget()
             self.taper_frame.pack_forget()
         self.count_label.config(text="Columns" if is_hybrid else "Pairs" if is_gradient else "Subs")
-        if is_gradient:
+
+    def _clamp_count_for_topology(self, topo):
+        """Sets the count spinner's maximum for `topo` and pulls the current
+        count down to it if needed."""
+        if topo == TOPO_GRADIENT:
             max_count = MAX_SUBS // 2
-        elif is_hybrid:
+        elif topo in ARC_HYBRID_TOPOLOGIES:
             max_count = MAX_SUBS_SPATIAL // 2
-        elif is_physical or is_arc or is_manual or is_progressive or is_focus or is_avoid:
+        elif topo in (TOPO_PHYSICAL, TOPO_ARC, TOPO_MANUAL, TOPO_PROGRESSIVE, TOPO_FOCUS, TOPO_AVOID):
             max_count = MAX_SUBS_SPATIAL
         else:
             max_count = MAX_SUBS
         self.count_spin.config(to=max_count)
-        if self.count.get() > max_count:
-            self.count.set(max_count)
+        try:
+            if self.count.get() > max_count:
+                self.count.set(max_count)
+        except tk.TclError:
+            pass
 
+    def _topology_note(self, topo):
+        """Tooltip text describing `topo` (Manual's is built by
+        _manual_note_text since it depends on the X/Y convention)."""
+        if topo == TOPO_MANUAL:
+            return self._manual_note_text()
+        is_ellipse = topo in ELLIPSE_TOPOLOGIES and self.shape.get() == SHAPE_ELLIPSE
         notes = {
             TOPO_END_FIRE: "Sub 1 = front (faces audience), highest number = rearmost. All normal polarity; "
                         "delay increases towards the front so the array reinforces forward and cancels rearward.",
@@ -2422,7 +2464,7 @@ class App(tk.Tk):
             TOPO_PROGRESSIVE: "Same physical model as Physical Horizontal Array (every element equidistant "
                      "from one center of curvature on a real arc of the given Radius, so delay stays fixed "
                      "at 0 and Rotation is the true local aim angle) but with a non-uniform angular step "
-                     "between adjacent elements instead of a constant one -- Progression sets the center:edge "
+                     "between adjacent elements instead of a constant one -- Progression sets the center:edge (needs 4+ elements) "
                      "step ratio (1.0 = uniform, identical to Physical Horizontal Array). Above 1.0 the center "
                      "gap(s) widen and the edge gaps narrow, so total coverage angle (and FAR) is unchanged. "
                      "This app's own extension, not part of S.A.D.",
@@ -2440,18 +2482,8 @@ class App(tk.Tk):
                      "measured-quiet guarantee -- for a genuinely noise-sensitive site, confirm with a "
                      "prediction tool or measurement rather than trusting the geometry blind. This app's own "
                      "extension, not a S.A.D. topology.",
-            TOPO_MANUAL: self._manual_note_text(),
         }
-        self.topology_note_icon.tooltip.text = notes[topo]
-
-        try:
-            n = self.count.get() * (2 if (is_gradient or is_hybrid) else 1)
-        except tk.TclError:
-            return
-        self._rebuild_rows(n, editable_all=is_manual)
-        self._update_venue_far()  # its "arc" readout depends on topology/Shape now (Ellipse's FAR<1 case)
-        self._on_change()
-        self._fit_window_height()
+        return notes[topo]
 
     def _on_count_change(self):
         # FocusOut/Return fire even when the count didn't change; a full
@@ -2474,6 +2506,20 @@ class App(tk.Tk):
         already branches on it (is_ellipse), so re-running it is the
         simplest way to refresh everything in sync."""
         self._on_topology_change()
+
+    def _schedule_change(self, *_):
+        """For high-frequency sources (slider drags, Manual typing): runs
+        _on_change once when Tk is next idle instead of once per event, so a
+        drag that outpaces the recompute collapses to its latest value rather
+        than queueing a backlog of stale full recomputes and OSC sends. Direct
+        _on_change() calls (topology change, Makeup Gain, load, ...) stay
+        synchronous."""
+        if self._change_after_id is None:
+            self._change_after_id = self.after_idle(self._run_scheduled_change)
+
+    def _run_scheduled_change(self):
+        self._change_after_id = None
+        self._on_change()
 
     def _on_change(self, *_):
         self._drop_stale_makeup()

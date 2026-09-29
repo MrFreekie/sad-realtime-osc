@@ -150,58 +150,6 @@ def build_project_dict(app) -> dict:
     }
 
 
-def default_project_dict() -> dict:
-    """Factory defaults for a fresh project -- the same values `App.__init__`
-    and its panel builders set up on first launch. Used by the "New" button
-    (fed through apply_project_dict, same as loading a file) so a full reset
-    goes through one tolerant code path instead of a second reset
-    implementation that could drift out of sync with it."""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "name": "",
-        "array": {
-            "topology": "arc_steering",
-            "count": 6,
-            "spacing_m": 1.4,
-            "row_spacing_m": 0.7,
-            "angle_deg": 0.0,
-            "radius_m": 2.0,
-            "steer_deg": 0.0,
-            "shape": "circle",
-            "ellipse_ratio": 1.0,
-            "progression_ratio": 1.0,
-            "focus_x_m": 10.0,
-            "focus_y_m": 0.0,
-            "avoid_x_m": 10.0,
-            "avoid_y_m": 0.0,
-            "gradient_pattern": "Cardioid",
-            "gradient_alpha": 0.5,
-        },
-        "level_taper": {"window": "Uniform", "max_atten_db": 0.0, "sidelobe_db": 30.0},
-        "units": {"length_unit": "m", "delay_display": "ms", "xy_convention": "L-Acoustics Mode"},
-        "dsp": {"sample_rate_hz": 96000},
-        "environment": {"temp_c": 20.0, "humidity_pct": 50.0, "altitude_m": 0.0},
-        "group": {
-            "delay_ms": 0.0,
-            "inverted": False,
-            "level_db": 0.0,
-            "prealign": {"active": False, "contribution_ms": 0.0, "main_system": "", "sub_system": ""},
-        },
-        "sub_box": {
-            "profile": "L-Acoustics KS28 (Horizontal)",
-            "width_m": 1.340,
-            "depth_m": 0.702,
-            "gap_m": 0.0,
-            "acoustic_center": {"enabled": False, "offset_m": 0.30},
-        },
-        "venue": {"length_m": 50.0, "width_m": 25.0},
-        "bandwidth": {"freq_high_hz": 60.0},
-        "alignment_wizard": {"mains_distance_m": 0.0, "mains_delay_ms": 0.0, "sub_distance_m": 0.0},
-        "osc": {"host": "127.0.0.1", "port": 5000, "prefix": "/sad/sub", "live_send": False},
-        "manual": {"x_m": [], "y_m": [], "gain_db": [], "reversed": []},
-    }
-
-
 def save_project(app, path) -> None:
     data = build_project_dict(app)
     with open(path, "w", encoding="utf-8") as f:

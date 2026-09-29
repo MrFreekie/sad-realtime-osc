@@ -82,7 +82,12 @@ def pressure_at_altitude_pa(altitude_m: float) -> float:
     """Atmospheric pressure at altitude_m above sea level, International
     Standard Atmosphere model. This is elevation only -- it doesn't
     account for day-to-day weather-driven pressure variation."""
-    base = max(1.0 - _ISA_LAPSE * altitude_m / _ISA_T0, 1e-6)
+    # The ISA troposphere model is only meaningful up to ~11 km, and the
+    # Cramer fit far short of that; clamping the altitude itself (not just
+    # the base of the power) keeps typed/loaded nonsense from producing a
+    # finite-but-absurd speed of sound (e.g. 525 m/s at 30 km).
+    altitude_m = max(-500.0, min(11000.0, altitude_m))
+    base = 1.0 - _ISA_LAPSE * altitude_m / _ISA_T0
     return _ISA_P0 * base ** (_ISA_G * _ISA_M / (_ISA_R * _ISA_LAPSE))
 
 
@@ -117,7 +122,7 @@ def end_fire(n: int, spacing_m: float, speed_mps: float, gain_trim_db=None) -> l
     time reference (0 delay); each element further forward is delayed by
     the propagation time across the elements behind it, so all elements
     arrive in phase toward the audience and cancel toward the rear."""
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     out = []
     for j in range(1, n + 1):
         delay_s = (n - j) * spacing_m / speed_mps
@@ -206,7 +211,7 @@ def gradient_cardioid(pairs: int, spacing_m: float, speed_mps: float, gain_trim_
     values generalize the pattern to figure-8/hyper/supercardioid/
     subcardioid -- see gradient_pair_delay_ms."""
     n = pairs * 2
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     transit_ms = (spacing_m / speed_mps) * 1000.0
     delay_ms = gradient_pair_delay_ms(transit_ms, alpha)
     out = []
@@ -277,13 +282,23 @@ def arc_virtual_source(n: int, spacing_m: float, angle_deg: float,
     the side of the minimum-delay element; the beam itself aims the other
     way (see arc_steering). Measured from the array's centre line (hybrids:
     column geometry, ignoring the front/rear row offset)."""
+    if not all(v is not None and math.isfinite(v) for v in (spacing_m, angle_deg, steer_deg, depth_scale)):
+        return None
     radius = _arc_radius_m(n, spacing_m, angle_deg)
-    if radius <= 0 or depth_scale is None or depth_scale <= 0:
+    if radius <= 0 or depth_scale <= 0:
         return None
     path_m = _arc_column_delays_s(n, spacing_m, angle_deg, 1.0, steer_deg, depth_scale)
     xs = [(i - (n - 1) / 2.0) * spacing_m for i in range(n)]
     rho = radius / depth_scale
-    offset, behind, rms = _fit_point_source(xs, path_m, (rho * math.sin(math.radians(steer_deg)), rho))
+    # A local search can land in a poor minimum (e.g. a heavily steered wide
+    # arc that's really a near-plane-wave), so also start from a far-away
+    # source and keep whichever fit is better.
+    span = max((n - 1) * spacing_m, 1e-3)
+    far = 20.0 * span
+    far_offset = far * math.tan(math.radians(max(-89.0, min(89.0, steer_deg))))
+    fits = [_fit_point_source(xs, path_m, seed)
+            for seed in ((rho * math.sin(math.radians(steer_deg)), rho), (0.0, far), (far_offset, far))]
+    offset, behind, rms = min(fits, key=lambda f: f[2])
     return behind, offset, rms
 
 
@@ -346,10 +361,14 @@ def arc_steering(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
     straight line, delayed as if positioned on a physical arc spanning
     angle_deg. The pattern is symmetric -- minimum (0 ms) at the center
     element(s), increasing toward both edges -- not a one-directional
-    ramp, matching S.A.D.'s own tutorial data (10 elements, 0.94 m
-    spacing, 71 deg arc -> delay 3.77/2.27/1.14/0.38/0.00 ms edge to
-    center, mirrored) to within ~0.07 ms, consistent with the tutorial's
-    displayed inputs themselves being rounded.
+    ramp, matching the profile of S.A.D.'s own tutorial data (10 elements,
+    0.94 m spacing, 71 deg arc -> delay 3.77/2.27/1.14/0.38/0.00 ms edge to
+    center, mirrored). At c = 343 m/s this gives 3.66/2.22/1.12/0.38/0.00,
+    up to ~0.11 ms (3 %) below the tutorial at the edge. The tutorial's
+    inputs are rounded (which alone only reaches ~3.70 ms) and it most
+    likely used c of about 340 m/s: c = 340 with 0.945 m / 71.5 deg gives
+    3.73/2.27/1.15/0.38, within 0.04 ms everywhere. The tutorial's own c and
+    exact inputs aren't known, so this is unverified beyond the shape.
 
     The angular step between adjacent elements is angle_deg/(n-1); the
     implicit arc radius is derived from that step and spacing_m via
@@ -377,7 +396,7 @@ def arc_steering(n: int, spacing_m: float, angle_deg: float, speed_mps: float,
     changes), so there's no placement/rotation to touch, just the delay
     curve's depth. 1.0 (default) reproduces the plain circle exactly --
     see _arc_column_delays_s."""
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     delays_s = _arc_column_delays_s(n, spacing_m, angle_deg, speed_mps, steer_deg, depth_scale)
     return [SubOutput(i + 1, delays_s[i] * 1000.0, trims[i], False) for i in range(n)]
 
@@ -406,7 +425,7 @@ def end_fire_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: 
     Returns 2*n_columns SubOutputs, ordered front/rear per column (odd =
     front, even = rear -- same pairing convention as gradient_cardioid)."""
     n = n_columns * 2
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     column_delays_s = _arc_column_delays_s(n_columns, column_spacing_m, angle_deg, speed_mps,
                                             steer_deg, depth_scale)
     row_delay_ms = row_spacing_m / speed_mps * 1000.0
@@ -443,7 +462,7 @@ def gradient_arc_hybrid(n_columns: int, column_spacing_m: float, row_spacing_m: 
     Returns 2*n_columns SubOutputs, ordered front/rear per column, same
     convention as end_fire_arc_hybrid."""
     n = n_columns * 2
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     column_delays_s = _arc_column_delays_s(n_columns, column_spacing_m, angle_deg, speed_mps,
                                             steer_deg, depth_scale)
     row_transit_ms = row_spacing_m / speed_mps * 1000.0
@@ -465,7 +484,7 @@ def physical_horizontal_array(n: int, gain_trim_db=None) -> list[SubOutput]:
     and level both exactly 0 for every element). All that's physically
     real here is where to place and aim each box; see
     physical_arc_layout for that."""
-    trims = gain_trim_db or [0.0] * n
+    trims = _trims(gain_trim_db, n)
     return [SubOutput(i + 1, 0.0, trims[i], False) for i in range(n)]
 
 
@@ -638,10 +657,18 @@ def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: flo
 
     gaps = n - 1
     center_gap = (gaps - 1) / 2.0
-    # Per-gap weight: 1.0 at the edges, `ratio` at the center gap(s),
-    # linearly interpolated in between by how close each gap is to center.
-    half_span = center_gap
-    weights = [1.0 + (ratio - 1.0) * (1.0 - abs(g - center_gap) / half_span) for g in range(gaps)]
+    # Per-gap weight: exactly `ratio` at the center-most gap(s), exactly 1.0
+    # at the edge gaps, linearly interpolated in between by distance from
+    # center. The center-most distance is 0 for an odd gap count (one middle
+    # gap) but 0.5 for an even one (two middle gaps), so the interpolation
+    # runs from that nearest distance, not from 0, or the middle gaps of an
+    # even-gap array would fall short of `ratio`. With only 2 gaps (3
+    # elements) both gaps are middle and edge at once: nothing to progress.
+    d_min = 0.0 if gaps % 2 else 0.5
+    span = center_gap - d_min
+    if span <= 0:
+        return physical_arc_layout(n, radius_m, angle_deg)
+    weights = [1.0 + (ratio - 1.0) * (1.0 - (abs(g - center_gap) - d_min) / span) for g in range(gaps)]
     total_weight = sum(weights)
     d_phis = [angle_deg * w / total_weight for w in weights]
 
@@ -765,6 +792,8 @@ def osc_to_gain_db(x: float) -> float:
 
 
 def manual(n: int, delays_ms, gains_db, polarities) -> list[SubOutput]:
+    if min(len(delays_ms), len(gains_db), len(polarities)) < n:
+        raise ValueError(f"manual() needs {n} delays, gains and polarities")
     return [SubOutput(i + 1, delays_ms[i], gains_db[i], polarities[i]) for i in range(n)]
 
 
@@ -1295,8 +1324,8 @@ def level_taper_db(n: int, window: str, max_atten_db: float, center_index: float
     if peak <= 0:
         return [0.0] * n
     if parametric:
-        return [20.0 * math.log10(max(wi / peak, _TAPER_FLOOR_LINEAR)) for wi in w]
-    return [-max_atten_db * (1.0 - wi / peak) for wi in w]
+        return [20.0 * math.log10(max(wi / peak, _TAPER_FLOOR_LINEAR)) + 0.0 for wi in w]
+    return [-max_atten_db * (1.0 - wi / peak) + 0.0 for wi in w]  # + 0.0: no "-0.0"
 
 
 def _mean_linear_db(gains_db: list[float], per_decade: float) -> float:

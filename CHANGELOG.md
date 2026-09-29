@@ -54,6 +54,44 @@ Fixed (smaller GUI issues from a QA pass):
   another topology and back. New / Load zero them first, so they never leak
   between projects.
 
+Fixed (from a math-verifier pass over `array_math.py`):
+- `speed_of_sound` gave absurd values for extreme altitudes typed by hand or
+  loaded from a file (e.g. 525 m/s at 30 km, -1.6e7 at 40 km). Altitude is now
+  clamped to -500..11,000 m inside the pressure model.
+- **Progressive Arc** Progression ratio: the centre-most gap(s) now get
+  exactly the stated multiple of the edge gaps' step for every element count
+  from 4 up. Before, it was exact only for an odd number of gaps (e.g. 7
+  elements at ratio 3 gave 2.6). Layouts with an odd element count (5, 7,
+  9, ...) change slightly when ratio > 1; even counts (4, 6, 8, ...) are
+  unchanged. 3 elements still can't progress (two gaps, both centre and
+  edge).
+- Every topology function now raises a clear "needs N entries" ValueError for
+  a too-short trim list (the GUI already treats it as "skip") instead of an
+  IndexError, matching Focus/Avoid Point; `manual()` likewise.
+- `arc_virtual_source` starts its search from two extra points so a near-
+  plane-wave (heavily steered/wide) arc isn't reported from a poor local fit,
+  and returns None for NaN inputs; the readout says "at infinity" or "no
+  reliable point-source fit" for extreme cases instead of a meaningless
+  "0.001 m behind".
+- `level_taper_db` no longer returns `-0.0` for a Uniform taper.
+- Docs: the Arc tutorial comparison said "within ~0.07 ms"; the true gap is
+  ~0.11 ms at the edge (3.66 vs 3.77 ms at c = 343 m/s; c ~ 340 m/s and the
+  tutorial's rounded inputs explain it to within 0.04 ms). README and the
+  `arc_steering` docstring now say so.
+
+Changed (internal, no behaviour change intended):
+- Slider drags and Manual typing now go through `_schedule_change`, which
+  runs the recompute + OSC send once when Tk is idle instead of once per
+  event, so a fast drag collapses to its latest value instead of queueing a
+  backlog. Direct changes (topology, Makeup Gain, load, spinbox arrows)
+  remain synchronous.
+- **New** now resets to the app's own freshly-built state (`App._factory_defaults`,
+  captured at launch) instead of a second hard-coded copy in `project_io`
+  (`default_project_dict`, removed). That copy had drifted: New didn't reset
+  the floor-bounce fields; it does now.
+- `_on_topology_change` split into `_apply_topology_visibility`,
+  `_clamp_count_for_topology` and `_topology_note`.
+
 Changed: `array_math._arc_radius_m` factored out of `_arc_column_delays_s`
 (delays verified identical).
 
