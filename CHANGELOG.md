@@ -79,6 +79,14 @@ Fixed (from a math-verifier pass over `array_math.py`):
   tutorial's rounded inputs explain it to within 0.04 ms). README and the
   `arc_steering` docstring now say so.
 
+Fixed: typed values ignored the spinbox range while a project load clamped to
+it, so e.g. an Ellipse ratio of 3.0 ran live but came back as 2.0 (with a
+warning) after save/load. The ranged fields (Arc, Steer, Ellipse ratio,
+Progression, Group delay/level, Temperature, Humidity, Altitude, ...) now clamp
+a typed value to their own range when committed (Return / focus-out / arrows).
+Pattern alpha and Null angle keep their own handling. The taper's Max atten /
+Sidelobe boxes aren't covered by this yet.
+
 Changed (internal, no behaviour change intended):
 - Slider drags and Manual typing now go through `_schedule_change`, which
   runs the recompute + OSC send once when Tk is idle instead of once per

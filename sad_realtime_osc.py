@@ -734,11 +734,23 @@ class App(tk.Tk):
         commit = on_commit or self._on_change
 
         def quantize():
+            try:
+                value = var.get()
+            except tk.TclError:
+                if decimals is None:
+                    commit()
+                return
+            new = value
+            # Typed text ignores the spinbox range, but a project load clamps
+            # to it -- so clamp here too, or a saved-and-reloaded project
+            # differs from what was running. Fields with their own handler
+            # (Pattern alpha, Null angle) do their own range handling.
+            if on_commit is None:
+                new = max(lo, min(hi, new))
             if decimals is not None:
-                try:
-                    var.set(round(var.get(), decimals))
-                except tk.TclError:
-                    return
+                new = round(new, decimals)
+            if new != value or decimals is not None:
+                var.set(new)
             commit()
 
         spin = ttk.Spinbox(parent, from_=lo, to=hi, increment=increment, textvariable=var, width=8,
