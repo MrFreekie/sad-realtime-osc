@@ -12,6 +12,9 @@ and streamed out over OSC.
 **100% vibe coded — use at your own risk, check all calculations before
 use.**
 
+☕ Free to use. If it saves you time on a show, you can
+[buy me a coffee](https://buymeacoffee.com/fohengineer).
+
 ## Credits
 
 The array math this app reimplements — End-Fire, Gradient/Cardioid,
@@ -1015,6 +1018,13 @@ A `schema_version` field in the file lets a future format change apply
 migrations rather than break old saves; opening a file saved by a newer
 app version than the one running shows a warning that some settings may
 not have loaded.
+
+## Support
+
+This app is free. If it's useful to you, a coffee is appreciated:
+[buymeacoffee.com/fohengineer](https://buymeacoffee.com/fohengineer) (also
+linked at the bottom of the app window). The array math itself is Merlijn van
+Veen's — see Credits above; consider supporting his work too.
 
 ## Files
 

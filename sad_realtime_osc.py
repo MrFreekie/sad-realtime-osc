@@ -24,11 +24,13 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.9.4"
+__version__ = "0.9.5"
+SUPPORT_URL = "https://buymeacoffee.com/fohengineer"
 
 import copy
 import ctypes
 import os
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -299,7 +301,11 @@ class App(tk.Tk):
             row=2, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 4))
         ttk.Label(self, text="100% vibe coded — use at your own risk, check all calculations before use.",
                   foreground="#a03030", font=("Segoe UI", 8, "bold")).grid(
-            row=3, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 6))
+            row=3, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 2))
+        support = ttk.Label(self, text="☕ Enjoying this? Buy me a coffee — buymeacoffee.com/fohengineer",
+                            foreground="#1a5fb4", font=("Segoe UI", 8, "underline"), cursor="hand2")
+        support.grid(row=4, column=0, sticky="w", padx=PANEL_PAD_X, pady=(0, 6))
+        support.bind("<Button-1>", lambda e: webbrowser.open(SUPPORT_URL))
 
         self._on_topology_change()
         self._update_venue_far()

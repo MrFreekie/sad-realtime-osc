@@ -3,6 +3,11 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [0.9.5] - 2026-09-30
+Added: a "Buy me a coffee" link (buymeacoffee.com/fohengineer) at the bottom of
+the app window -- click opens it in the browser -- and in the README (top and a
+new Support section).
+
 ## [0.9.4] - 2026-09-29
 Added: **virtual source** readout in the Info panel (Arc / Broadside
 Steering, both Arc Hybrids, Physical Horizontal Array, Progressive Arc) --
