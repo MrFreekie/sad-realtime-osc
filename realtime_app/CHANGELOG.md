@@ -19,6 +19,12 @@ Fixed (web app only; found by the new `web-checker` agent):
 - Help popovers near the bottom of the window ran off screen. They now
   flip above the button, or shift up, so they stay inside the window.
 
+Changed (web app): on every online visit the offline cache now asks the
+server whether each app file changed, instead of trusting the browser's
+own cache. A new version shows on the next reload after a deploy, not up
+to 10 minutes later. An unchanged file costs a small "not modified"
+reply. With no network, the app still loads from the offline cache.
+
 Added: **GitHub Pages deploy and CI** (`.github/workflows/pages.yml`).
 Every push and pull request runs three checks: the parity cases in desktop
 Python, `check_web_model.py` (headless Tk under xvfb), and the parity cases

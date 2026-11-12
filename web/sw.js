@@ -3,6 +3,10 @@
 // - App files (this site): network first, so an online visit always gets
 //   the latest version; falls back to the cached copy when offline or when
 //   the network takes longer than NETWORK_TIMEOUT_MS (flaky venue Wi-Fi).
+//   Requests use cache: "no-cache", so the browser's own HTTP cache always
+//   asks the server whether a file changed (a cheap 304 if not). Without
+//   it, a copy the HTTP cache still thinks is fresh (GitHub Pages allows
+//   10 minutes) could be served right after a deploy.
 // - Pyodide runtime (CDN, pinned version): cache first. It never changes
 //   for a given version, and it's the big download (~10 MB).
 //
@@ -77,7 +81,7 @@ async function networkFirst(request) {
   const cache = await caches.open(APP_CACHE);
   try {
     const response = await Promise.race([
-      fetch(request),
+      fetch(request, { cache: "no-cache" }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), NETWORK_TIMEOUT_MS)),
     ]);
     if (response.ok) cache.put(request, response.clone());
