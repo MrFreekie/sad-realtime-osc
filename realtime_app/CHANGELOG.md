@@ -5,6 +5,20 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Fixed (web app only; found by the new `web-checker` agent):
+- Clearing a number field and pressing Enter or clicking away stored the
+  field's minimum. For example, a blank Spacing became 0.001 m and every
+  delay collapsed. A blank field now keeps its last value, as in the
+  desktop app. This applies to every number field, Group distance and the
+  Manual table cells.
+- A value the app limited (e.g. Count 999 → 48) kept showing what was typed
+  until the page was reloaded. Fields now show the value actually used as
+  soon as they commit.
+- In Manual mode at about 1024 px wide, the whole page scrolled sideways.
+  The table now scrolls inside its own box.
+- Help popovers near the bottom of the window ran off screen. They now
+  flip above the button, or shift up, so they stay inside the window.
+
 Added: **GitHub Pages deploy and CI** (`.github/workflows/pages.yml`).
 Every push and pull request runs three checks: the parity cases in desktop
 Python, `check_web_model.py` (headless Tk under xvfb), and the parity cases

@@ -116,9 +116,12 @@ main[inert] { opacity: 0.55; }
 .muted { color: var(--text-muted); }
 
 /* Design tab: controls on the left, the per-sub table on the right */
-.design-layout { display: grid; grid-template-columns: minmax(440px, 560px) 1fr; gap: 14px; align-items: start; }
+/* minmax(0, 1fr) + min-width: 0 let the table column shrink so a wide
+   table (Manual mode's input cells) scrolls inside .table-scroll instead
+   of pushing the whole page sideways. */
+.design-layout { display: grid; grid-template-columns: minmax(440px, 560px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .col-controls { display: grid; gap: 10px; }
-.col-table { position: sticky; top: 12px; }
+.col-table { position: sticky; top: 12px; min-width: 0; }
 .stack { display: grid; gap: 10px; max-width: 760px; }
 @media (max-width: 1000px) {
   .design-layout { grid-template-columns: 1fr; }
@@ -176,7 +179,7 @@ button.help {
   position: fixed;
   inset: auto;
   margin: 0;
-  max-height: 60vh;
+  max-height: calc(100vh - 32px); /* app.js also sets this and keeps it on screen */
   overflow: auto;
   padding: 10px 12px;
   border: 1px solid var(--border);

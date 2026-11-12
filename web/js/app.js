@@ -45,8 +45,15 @@ function toDisplay(meters) {
   return String(Number(v.toFixed(UNIT_DECIMALS[u])));
 }
 
+// Number("") is 0, which would pass as a real value and get clamped to the
+// field's minimum. A blank field means "no value": NaN, so the caller
+// puts the last good value back (the desktop ignores a blank field too).
+function toNumber(text) {
+  return String(text).trim() === "" ? NaN : Number(text);
+}
+
 function toMeters(display) {
-  return Math.round(Number(display) * UNIT_SCALE[unit()] * 1000) / 1000;
+  return Math.round(toNumber(display) * UNIT_SCALE[unit()] * 1000) / 1000;
 }
 
 function fmtNumber(value) {
@@ -158,7 +165,12 @@ function render() {
   for (const el of app.querySelectorAll("[data-options]")) fillSelect(el, optionsFor(el.dataset.options));
 
   for (const el of app.querySelectorAll("[data-path]")) {
-    if (el === document.activeElement && el.type !== "range" && el.tagName !== "SELECT") continue;
+    // Only free text (the show name) commits on every keystroke, so it's the
+    // one field to leave alone while it has focus. Number fields commit on
+    // Enter/blur, so they're redrawn even when focused: that shows the value
+    // the model actually kept (e.g. Count 999 clamped to 12) or puts the
+    // last good value back after a blank or invalid entry.
+    if (el === document.activeElement && el.type === "text") continue;
     const value = get(state, el.dataset.path);
     if (el.type === "checkbox") el.checked = Boolean(value);
     else if ("length" in el.dataset) {
@@ -168,7 +180,7 @@ function render() {
     else el.value = el.type === "range" ? value : fmtNumber(value);
   }
   for (const el of app.querySelectorAll("[data-view-length]")) {
-    if (el !== document.activeElement) el.value = toDisplay(get(view, el.dataset.viewLength));
+    el.value = toDisplay(get(view, el.dataset.viewLength)); // commits on Enter/blur, see above
     el.step = UNIT_STEP[u];
   }
   for (const el of app.querySelectorAll("[data-unit]")) el.textContent = u;
@@ -219,11 +231,15 @@ function renderTable() {
   const tbody = $("results");
   const editing = tbody.contains(document.activeElement);
   if (editing && t.editable) {
-    // Don't rebuild under the cursor while typing in Manual mode; just
-    // refresh the computed cells.
+    // Don't rebuild under the cursor in Manual mode (focus would be lost);
+    // refresh values in place. Cells commit on Enter/blur, so writing the
+    // kept value back into the focused cell is safe.
     t.rows.forEach((r, i) => {
       const tr = tbody.rows[i];
       if (!tr) return;
+      for (const el of tr.querySelectorAll('input[type="number"]')) {
+        el.value = fmtNumber(state.manual[el.dataset.field][i]);
+      }
       tr.cells[3].textContent = r.text.rotation;
       tr.cells[4].textContent = r.text.delay;
       tr.cells[5].textContent = r.text.delay_total;
@@ -285,7 +301,7 @@ function readField(el) {
   if ("bool" in el.dataset) return el.value === "true";
   if ("int" in el.dataset) return parseInt(el.value, 10);
   if ("length" in el.dataset) return toMeters(el.value);
-  if (el.type === "number" || el.type === "range") return Number(el.value);
+  if (el.type === "number" || el.type === "range") return toNumber(el.value);
   return el.value;
 }
 
@@ -316,7 +332,7 @@ function bindEvents() {
     } else if (el.matches("[data-prealign]")) {
       dispatch({ type: `prealign_${el.dataset.prealign}`, value: el.value });
     } else if (el.matches("#results input")) {
-      const value = el.type === "checkbox" ? el.checked : Number(el.value);
+      const value = el.type === "checkbox" ? el.checked : toNumber(el.value);
       if (typeof value === "number" && !Number.isFinite(value)) return render();
       dispatch({ type: "manual", row: Number(el.dataset.row), field: el.dataset.field, value });
     }
@@ -408,14 +424,25 @@ function setupHelp() {
     btn.textContent = "?";
     btn.setAttribute("popovertarget", id);
     if (!btn.hasAttribute("aria-label")) btn.setAttribute("aria-label", "Help");
-    // Position under the button
+    // Position under the button; flip above it if it doesn't fit below, and
+    // keep it inside the window either way (it's position: fixed, so
+    // scrolling the page wouldn't bring a cut-off part into view).
     pop.addEventListener("toggle", (e) => {
       if (e.newState !== "open") return;
       const r = btn.getBoundingClientRect();
-      const width = Math.min(420, window.innerWidth - 32);
+      const margin = 16, gap = 6;
+      const width = Math.min(420, window.innerWidth - 2 * margin);
       pop.style.width = `${width}px`;
-      pop.style.left = `${Math.max(16, Math.min(r.left, window.innerWidth - width - 16))}px`;
-      pop.style.top = `${r.bottom + 6}px`;
+      pop.style.maxHeight = `${window.innerHeight - 2 * margin}px`;
+      pop.style.left = `${Math.max(margin, Math.min(r.left, window.innerWidth - width - margin))}px`;
+      const h = pop.offsetHeight;
+      const below = window.innerHeight - r.bottom - gap - margin;
+      const above = r.top - gap - margin;
+      let top;
+      if (h <= below) top = r.bottom + gap;
+      else if (h <= above) top = r.top - gap - h;
+      else top = Math.max(margin, window.innerHeight - margin - h);
+      pop.style.top = `${top}px`;
     });
   }
 }
