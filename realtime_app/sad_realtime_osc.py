@@ -201,6 +201,12 @@ _WINDOW_CHROME_MARGIN = 80
 _MIN_WINDOW_HEIGHT = 200
 
 
+def _fmt(value, decimals):
+    """Fixed-decimal readout that never shows "-0.00" for a value that
+    rounds to zero (e.g. the centre sub of an odd-count arc)."""
+    return f"{round(value, decimals) + 0.0:.{decimals}f}"
+
+
 class Tooltip:
     """Small popup showing `text` while the cursor is over `widget`."""
 
@@ -254,6 +260,7 @@ class App(tk.Tk):
         self._makeup_group_level = 0.0
         self._last_taper_onaxis_db = 0.0
         self.prealign_active = False
+        self.prealign_systems = ("", "")  # (main, sub) the active pre-align delay came from
         self.prealign_note_var = tk.StringVar(value="")
         self.project_name = tk.StringVar(value="")
         self.project_path = None
@@ -1379,6 +1386,9 @@ class App(tk.Tk):
             return
         self.prealign_contribution_ms = sub_ms
         self.prealign_active = True
+        # Remember which preset the delay came from, so Save records it even
+        # if the dropdowns are changed afterwards without pressing Use.
+        self.prealign_systems = (main_sys, sub_sys)
         self._set_prealign_note(main_sys, sub_sys, main_ms, sub_pol)
         self._on_change()
 
@@ -1391,6 +1401,7 @@ class App(tk.Tk):
             pass
         self.prealign_contribution_ms = 0.0
         self.prealign_active = False
+        self.prealign_systems = ("", "")
         self._set_prealign_note()
         self._on_change()
 
@@ -2795,20 +2806,20 @@ class App(tk.Tk):
             if is_depth_stacked:
                 for i, pos in enumerate(positions):
                     if i < len(depth_labels):
-                        depth_labels[i].config(text=f"{pos:.2f}")
+                        depth_labels[i].config(text=_fmt(pos, 2))
                     if i < len(lateral_labels):
                         lateral_labels[i].config(text="0.00")
             else:
                 for i, pos in enumerate(positions):
                     if i < len(lateral_labels):
-                        lateral_labels[i].config(text=f"{pos:.2f}")
+                        lateral_labels[i].config(text=_fmt(pos, 2))
 
         layout = self._compute_physical_layout()
         for i, (depth, _lateral, rotation) in enumerate(layout):
             if not is_manual and not is_depth_stacked and i < len(depth_labels):
-                depth_labels[i].config(text=f"{depth:.2f}")
+                depth_labels[i].config(text=_fmt(depth, 2))
             if i < len(self.rotation_labels):
-                self.rotation_labels[i].config(text=f"{rotation:.1f}")
+                self.rotation_labels[i].config(text=_fmt(rotation, 1))
 
         try:
             group_delay = self.group_delay.get()
@@ -2824,10 +2835,13 @@ class App(tk.Tk):
         # Manual's Gain Trim is a live Entry bound to manual_gain_vars -- already
         # shows exactly what was typed, no push update needed (same reasoning as
         # Y/X above; .config(text=...) on an Entry would raise anyway).
+        # Elsewhere show the computed gain (s.gain_db), not the raw trim, so the
+        # column matches what OSC sends -- e.g. Avoid Point's odd-count
+        # balance correction, which the trim vars don't carry.
         if not is_manual:
-            for i in range(len(subs)):
-                if i < len(self.gain_widgets) and i < len(self.trim_vars):
-                    self.gain_widgets[i].config(text=f"{self.trim_vars[i].get():.2f}")
+            for i, s in enumerate(subs):
+                if i < len(self.gain_widgets):
+                    self.gain_widgets[i].config(text=_fmt(s.gain_db, 2))
 
         for i, s in enumerate(subs):
             total_gain = total_gain_db(s.gain_db, group_level)

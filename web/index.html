@@ -25,53 +25,425 @@
     <button role="tab" aria-selected="false" aria-controls="tab-alignment" id="t-alignment">Alignment</button>
   </nav>
 
-  <main>
-    <section id="tab-design" role="tabpanel" aria-labelledby="t-design">
-      <div class="grid-2">
-        <form class="panel" id="demo-form" autocomplete="off">
-          <h2>End-Fire (engine preview)</h2>
-          <fieldset id="demo-controls" disabled>
-            <div class="field">
-              <label for="count">Subs</label><output for="count" id="count-out"></output>
-              <input type="range" id="count" min="1" max="16" step="1" value="6">
-            </div>
-            <div class="field">
-              <label for="spacing">Spacing</label><output for="spacing" id="spacing-out"></output>
-              <input type="range" id="spacing" min="0.3" max="3" step="0.01" value="1.2">
-            </div>
-            <div class="field">
-              <label for="temp">Temperature</label><output for="temp" id="temp-out"></output>
-              <input type="range" id="temp" min="-10" max="40" step="0.5" value="20">
-            </div>
-          </fieldset>
-          <p class="muted" id="demo-meta"></p>
-        </form>
+  <main id="app" inert>
+    <!-- ============================================================ DESIGN -->
+    <section id="tab-design" role="tabpanel" aria-labelledby="t-design" class="design-layout">
+      <div class="col-controls">
+        <section class="panel" aria-labelledby="h-project">
+          <h2 id="h-project">Project <button class="help" data-help="project"></button></h2>
+          <div class="row">
+            <label for="f-name">Name / notes</label>
+            <input id="f-name" type="text" class="wide" data-path="name" spellcheck="false">
+          </div>
+          <div class="buttons">
+            <button type="button" id="btn-new">New</button>
+            <button type="button" id="btn-save">Save</button>
+            <button type="button" id="btn-load">Load…</button>
+            <input type="file" id="file-load" accept=".sadrt,application/json" hidden>
+            <span class="muted" id="project-status">unsaved project</span>
+          </div>
+        </section>
 
-        <div class="panel">
-          <h2>Per-sub output</h2>
-          <table class="results" aria-describedby="demo-meta">
-            <thead><tr><th scope="col">Sub</th><th scope="col">Delay (ms)</th><th scope="col">Gain (dB)</th><th scope="col">Polarity</th></tr></thead>
+        <section class="panel" aria-labelledby="h-array">
+          <h2 id="h-array">Array</h2>
+          <div class="row">
+            <label for="f-topology">Topology</label>
+            <select id="f-topology" data-path="array.topology" data-options="topologies" class="wide"></select>
+            <button class="help" data-help-from="topology_note" aria-label="About this topology"></button>
+          </div>
+          <div class="row">
+            <label for="f-count" data-text="count_label">Subs</label>
+            <input id="f-count" type="number" min="1" step="1" data-path="array.count" data-int>
+          </div>
+          <div class="row" data-show="spacing">
+            <label for="f-spacing">Spacing</label>
+            <span class="len"><input id="f-spacing" type="number" data-path="array.spacing_m" data-length><span data-unit></span></span>
+            <input type="range" min="0.1" max="5" step="0.001" data-path="array.spacing_m" aria-label="Spacing (m)">
+            <span class="readout" data-text="wavelength_text"></span>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="h-topo" data-show="topology_options">
+          <h2 id="h-topo">Topology options</h2>
+          <div class="row" data-show="row_spacing">
+            <label for="f-row-spacing">Row spacing</label>
+            <span class="len"><input id="f-row-spacing" type="number" data-path="array.row_spacing_m" data-length><span data-unit></span></span>
+            <input type="range" min="0.1" max="5" step="0.001" data-path="array.row_spacing_m" aria-label="Row spacing (m)">
+            <span class="readout" data-text="row_wavelength_text"></span>
+            <button class="help" data-help="row_spacing"></button>
+          </div>
+          <div class="row" data-show="angle">
+            <label for="f-angle">Arc (°)</label>
+            <input id="f-angle" type="number" step="1" min="0" max="180" data-path="array.angle_deg">
+            <input type="range" min="0" max="180" step="0.1" data-path="array.angle_deg" aria-label="Arc (°)">
+            <span class="readout" data-text="far_text"></span>
+          </div>
+          <div class="row" data-show="radius">
+            <label for="f-radius">Radius</label>
+            <span class="len"><input id="f-radius" type="number" data-path="array.radius_m" data-length><span data-unit></span></span>
+          </div>
+          <div class="row" data-show="steer">
+            <label for="f-steer">Steer (°)</label>
+            <input id="f-steer" type="number" step="1" min="-90" max="90" data-path="array.steer_deg">
+            <input type="range" min="-90" max="90" step="0.1" data-path="array.steer_deg" aria-label="Steer (°)">
+            <span></span>
+            <button class="help" data-help="steer"></button>
+          </div>
+          <div class="row" data-show="shape">
+            <label for="f-shape">Shape</label>
+            <select id="f-shape" data-path="array.shape">
+              <option value="circle">Circle</option>
+              <option value="ellipse">Ellipse</option>
+            </select>
+          </div>
+          <div class="row" data-show="ellipse">
+            <label for="f-ellipse">Ellipse ratio</label>
+            <input id="f-ellipse" type="number" step="0.05" min="0.05" max="2" data-path="array.ellipse_ratio">
+            <input type="range" min="0.05" max="2" step="0.01" data-path="array.ellipse_ratio" aria-label="Ellipse ratio">
+            <span></span>
+            <button class="help" data-help="ellipse_ratio"></button>
+          </div>
+          <div class="row" data-show="progression">
+            <label for="f-progression">Progression</label>
+            <input id="f-progression" type="number" step="0.1" min="1" max="8" data-path="array.progression_ratio">
+            <input type="range" min="1" max="8" step="0.01" data-path="array.progression_ratio" aria-label="Progression">
+            <span></span>
+            <button class="help" data-help="progression"></button>
+          </div>
+          <div class="row" data-show="focus">
+            <label for="f-focus-x">Focus X</label>
+            <span class="len"><input id="f-focus-x" type="number" data-path="array.focus_x_m" data-length><span data-unit></span></span>
+          </div>
+          <div class="row" data-show="focus">
+            <label for="f-focus-y">Focus Y</label>
+            <span class="len"><input id="f-focus-y" type="number" data-path="array.focus_y_m" data-length><span data-unit></span></span>
+            <span></span><span></span>
+            <button class="help" data-help="focus"></button>
+          </div>
+          <div class="row" data-show="avoid">
+            <label for="f-avoid-x">Avoid X</label>
+            <span class="len"><input id="f-avoid-x" type="number" data-path="array.avoid_x_m" data-length><span data-unit></span></span>
+          </div>
+          <div class="row" data-show="avoid">
+            <label for="f-avoid-y">Avoid Y</label>
+            <span class="len"><input id="f-avoid-y" type="number" data-path="array.avoid_y_m" data-length><span data-unit></span></span>
+            <span></span><span></span>
+            <button class="help" data-help="avoid"></button>
+          </div>
+          <div class="row" data-show="pattern">
+            <label for="f-pattern">Pattern</label>
+            <select id="f-pattern" data-path="array.gradient_pattern" data-options="patterns"></select>
+          </div>
+          <div class="row" data-show="pattern">
+            <label for="f-alpha">Pattern α</label>
+            <input id="f-alpha" type="number" step="0.01" min="0" max="0.9" data-path="array.gradient_alpha">
+            <input type="range" min="0" max="0.9" step="0.001" data-path="array.gradient_alpha" aria-label="Pattern α">
+            <span></span>
+            <button class="help" data-help="pattern"></button>
+          </div>
+          <div class="row" data-show="pattern">
+            <label for="f-null">Null angle (°)</label>
+            <input id="f-null" type="number" step="0.5" min="90" max="180" data-path="ui.null_angle_deg">
+            <input type="range" min="90" max="180" step="0.1" data-path="ui.null_angle_deg" aria-label="Null angle (°)">
+            <span></span>
+            <button class="help" data-help="null_angle"></button>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="h-taper" data-show="taper">
+          <h2 id="h-taper">Level taper <span class="muted">(Arc / Physical / Progressive / Hybrids only)</span>
+            <button class="help" data-help="taper"></button></h2>
+          <div class="row">
+            <label for="f-window">Window</label>
+            <select id="f-window" data-path="level_taper.window" data-options="windows"></select>
+          </div>
+          <div class="row" data-show="!parametric_taper">
+            <label for="f-atten">Max atten (dB)</label>
+            <input id="f-atten" type="number" step="0.5" min="0" max="30" data-path="level_taper.max_atten_db">
+          </div>
+          <div class="row" data-show="parametric_taper">
+            <label for="f-sidelobe">Sidelobe (dB)</label>
+            <input id="f-sidelobe" type="number" step="1" min="10" max="100" data-path="level_taper.sidelobe_db">
+          </div>
+          <div class="row">
+            <span class="readout span-3" data-text="taper_cost_text"></span>
+            <span></span>
+            <button class="help" data-help="taper_cost"></button>
+          </div>
+          <div class="buttons">
+            <button type="button" data-action="makeup_apply">Makeup Gain</button>
+            <button type="button" data-action="makeup_clear">Clear</button>
+            <span class="note" data-text="makeup_text"></span>
+            <button class="help" data-help="makeup"></button>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="h-bw">
+          <h2 id="h-bw">Sub bandwidth → optimum spacing <button class="help" data-help="bandwidth"></button></h2>
+          <div class="row">
+            <label for="f-high">High (Hz)</label>
+            <input id="f-high" type="number" step="1" min="1" max="20000" data-path="bandwidth.freq_high_hz">
+            <span class="readout" data-text="optimum_text"></span>
+            <button type="button" data-action="use_optimum_spacing" data-enabled="optimum_enabled">Use</button>
+          </div>
+          <div class="row" data-show="row_spacing">
+            <span></span><span></span>
+            <span class="readout" data-text="row_optimum_text"></span>
+            <button type="button" data-action="use_optimum_row_spacing">Use</button>
+            <button class="help" data-help="row_optimum"></button>
+          </div>
+          <div class="row" data-show="steer">
+            <span class="readout span-4" data-text="grating_lobe_text"></span>
+            <button class="help" data-help="grating"></button>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="h-info">
+          <h2 id="h-info">Info <button class="help" data-help="info"></button></h2>
+          <p class="info-line">
+            <span data-text="info.length_text"></span>
+            <span data-text="info.one_lambda_text"></span>
+            <span data-text="info.d180_text"></span>
+            <span data-text="info.d240_text"></span>
+            <span data-text="info.d360_text"></span>
+          </p>
+          <p class="info-line" data-text="info.virtual_text"></p>
+        </section>
+      </div>
+
+      <section class="panel col-table" aria-labelledby="h-results">
+        <div class="table-head">
+          <h2 id="h-results">Per-sub output <button class="help" data-help="results"></button></h2>
+          <span class="spacer"></span>
+          <button type="button" id="btn-copy">Copy</button>
+          <button type="button" id="btn-csv">Export CSV</button>
+        </div>
+        <p class="error" id="table-error" hidden></p>
+        <div class="table-scroll">
+          <table class="results">
+            <thead><tr>
+              <th scope="col">Sub</th><th scope="col">Y (m)</th><th scope="col">X (m)</th>
+              <th scope="col">Rotation (°)</th>
+              <th scope="col" id="th-delay">Delay (ms)</th><th scope="col" id="th-delay-total">Delay + Group (ms)</th>
+              <th scope="col">Gain Trim (dB)</th><th scope="col">Gain + Group (dB)</th><th scope="col">Polarity</th>
+            </tr></thead>
             <tbody id="results"></tbody>
           </table>
         </div>
-      </div>
+      </section>
     </section>
 
-    <section id="tab-setup" role="tabpanel" aria-labelledby="t-setup" hidden>
-      <div class="panel placeholder">Setup controls are not built yet.</div>
+    <!-- ============================================================= SETUP -->
+    <section id="tab-setup" role="tabpanel" aria-labelledby="t-setup" class="stack" hidden>
+      <section class="panel" aria-labelledby="h-units">
+        <h2 id="h-units">Units</h2>
+        <div class="row">
+          <label for="f-unit">Length unit</label>
+          <select id="f-unit" data-path="units.length_unit">
+            <option>m</option><option>cm</option><option>mm</option>
+          </select>
+          <span></span><span></span>
+          <button class="help" data-help="units"></button>
+        </div>
+        <div class="row">
+          <label for="f-xy">X/Y convention</label>
+          <select id="f-xy" data-path="units.xy_convention" data-options="xy_conventions"></select>
+          <span></span><span></span>
+          <button class="help" data-help="xy"></button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-dsp">
+        <h2 id="h-dsp">DSP clock <button class="help" data-help="dsp"></button></h2>
+        <div class="row">
+          <label for="f-rate">Sample rate</label>
+          <select id="f-rate" data-path="dsp.sample_rate_hz" data-options="dsp_rates" data-int></select>
+        </div>
+        <div class="row">
+          <label for="f-delay-unit">Show delay as</label>
+          <select id="f-delay-unit" data-path="units.delay_display">
+            <option value="ms">ms</option><option value="samples">samples</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-env">
+        <h2 id="h-env">Environment <button class="help" data-help="environment"></button></h2>
+        <div class="row">
+          <label for="f-temp">Temperature (°C)</label>
+          <input id="f-temp" type="number" step="0.5" min="-10" max="40" data-path="environment.temp_c">
+          <input type="range" min="-10" max="40" step="0.1" data-path="environment.temp_c" aria-label="Temperature (°C)">
+          <span class="readout" data-text="speed_text"></span>
+        </div>
+        <div class="row">
+          <label for="f-rh">Relative humidity (%)</label>
+          <input id="f-rh" type="number" step="1" min="0" max="100" data-path="environment.humidity_pct">
+          <input type="range" min="0" max="100" step="1" data-path="environment.humidity_pct" aria-label="Relative humidity (%)">
+        </div>
+        <div class="row">
+          <label for="f-alt">Altitude (m)</label>
+          <input id="f-alt" type="number" step="10" min="0" max="5000" data-path="environment.altitude_m">
+          <input type="range" min="0" max="5000" step="10" data-path="environment.altitude_m" aria-label="Altitude (m)">
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-venue" data-show="venue">
+        <h2 id="h-venue">Venue → arc (FAR) <button class="help" data-help="venue"></button></h2>
+        <div class="row">
+          <label for="f-venue-l">Length</label>
+          <span class="len"><input id="f-venue-l" type="number" data-path="venue.length_m" data-length><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-venue-w">Width</label>
+          <span class="len"><input id="f-venue-w" type="number" data-path="venue.width_m" data-length><span data-unit></span></span>
+          <span class="readout" data-text="venue.far_text"></span>
+          <button type="button" data-action="set_arc_from_venue" data-enabled="venue.can_set_arc">Set arc</button>
+        </div>
+        <div class="row" data-show="ellipse">
+          <span></span><span></span>
+          <span class="readout" data-text="venue.ellipse_text"></span>
+          <button type="button" data-action="use_venue_ellipse">Use</button>
+          <button class="help" data-help="venue_ellipse"></button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-box">
+        <h2 id="h-box">Sub box dimensions <button class="help" data-help="box"></button></h2>
+        <div class="row">
+          <label for="f-profile">Profile</label>
+          <select id="f-profile" data-path="sub_box.profile" data-options="profiles" class="wide"></select>
+        </div>
+        <div class="row">
+          <label for="f-box-w">Width</label>
+          <span class="len"><input id="f-box-w" type="number" data-path="sub_box.width_m" data-length><span data-unit></span></span>
+          <button type="button" data-action="set_min_spacing">Set min spacing</button>
+        </div>
+        <div class="row">
+          <label for="f-box-d">Depth</label>
+          <span class="len"><input id="f-box-d" type="number" data-path="sub_box.depth_m" data-length><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-gap">Gap between cabinets</label>
+          <span class="len"><input id="f-gap" type="number" data-path="sub_box.gap_m" data-length><span data-unit></span></span>
+          <button type="button" data-action="set_spacing_gap">Set spacing (+ gap)</button>
+        </div>
+        <p class="readout" data-text="collision_text"></p>
+        <div class="row">
+          <label class="check"><input type="checkbox" data-path="sub_box.acoustic_center.enabled"> Acoustic centre offset</label>
+          <span class="len"><input type="number" data-path="sub_box.acoustic_center.offset_m" data-length aria-label="Acoustic centre offset"><span data-unit></span></span>
+          <span></span><span></span>
+          <button class="help" data-help="acoustic_centre"></button>
+        </div>
+      </section>
     </section>
 
-    <section id="tab-alignment" role="tabpanel" aria-labelledby="t-alignment" hidden>
-      <div class="panel placeholder">Alignment tools are not built yet.</div>
+    <!-- ========================================================= ALIGNMENT -->
+    <section id="tab-alignment" role="tabpanel" aria-labelledby="t-alignment" class="stack" hidden>
+      <section class="panel" aria-labelledby="h-group">
+        <h2 id="h-group">Group (applied to all subs) <button class="help" data-help="group"></button></h2>
+        <div class="row">
+          <label for="f-gdelay">Group delay (ms)</label>
+          <input id="f-gdelay" type="number" step="0.1" min="0" max="1000" data-path="group.delay_ms">
+          <input type="range" min="0" max="1000" step="0.01" data-path="group.delay_ms" aria-label="Group delay (ms)">
+        </div>
+        <div class="row">
+          <label for="f-gdist">Distance</label>
+          <span class="len"><input id="f-gdist" type="number" data-view-length="group_distance_m" data-action-input="group_distance"><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-gpol">Group polarity</label>
+          <select id="f-gpol" data-path="group.inverted" data-bool>
+            <option value="false">Normal</option><option value="true">Inverted</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="f-glevel">Group level (dB)</label>
+          <input id="f-glevel" type="number" step="0.1" min="-40" max="18" data-path="group.level_db">
+          <input type="range" min="-40" max="18" step="0.1" data-path="group.level_db" aria-label="Group level (dB)">
+        </div>
+        <p class="note" data-text-state="ui.prealign_note"></p>
+        <p class="note" data-text="makeup_text"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-prealign">
+        <h2 id="h-prealign">Pre-alignment delay lookup <button class="help" data-help="prealign"></button></h2>
+        <p class="error" id="prealign-error" hidden></p>
+        <div id="prealign-controls">
+          <div class="row">
+            <label for="f-pa-main">Main system</label>
+            <select id="f-pa-main" data-prealign="main"></select>
+          </div>
+          <div class="row">
+            <label for="f-pa-sub">Sub preset</label>
+            <select id="f-pa-sub" data-prealign="sub" class="wide"></select>
+          </div>
+          <p class="readout" id="pa-main-text"></p>
+          <p class="readout" id="pa-sub-text"></p>
+          <div class="buttons">
+            <button type="button" data-action="prealign_use">Use → Group delay</button>
+            <button type="button" data-action="prealign_clear">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-wizard">
+        <h2 id="h-wizard">Sub → tops alignment wizard <button class="help" data-help="wizard"></button></h2>
+        <div class="row">
+          <label for="f-mains-d">Mains dist. to FOH</label>
+          <span class="len"><input id="f-mains-d" type="number" data-path="alignment_wizard.mains_distance_m" data-length><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-mains-ms">Mains delay (ms)</label>
+          <input id="f-mains-ms" type="number" step="0.01" data-path="alignment_wizard.mains_delay_ms">
+        </div>
+        <div class="row">
+          <label for="f-sub-d">Sub dist. to FOH</label>
+          <span class="len"><input id="f-sub-d" type="number" data-path="alignment_wizard.sub_distance_m" data-length><span data-unit></span></span>
+          <span class="readout" data-text="alignment.corrected_text"></span>
+        </div>
+        <p class="readout" data-text="alignment.result_text"></p>
+        <div class="buttons">
+          <button type="button" data-action="set_group_from_alignment">Set group delay</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-bounce">
+        <h2 id="h-bounce">Floor bounce null (FOH) <button class="help" data-help="bounce"></button></h2>
+        <div class="row">
+          <label for="f-src-h">Source height</label>
+          <span class="len"><input id="f-src-h" type="number" data-path="floor_bounce.source_height_m" data-length><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-mic-d">FOH mic distance</label>
+          <span class="len"><input id="f-mic-d" type="number" data-path="floor_bounce.mic_distance_m" data-length><span data-unit></span></span>
+        </div>
+        <div class="row">
+          <label for="f-mic-h">FOH mic height</label>
+          <span class="len"><input id="f-mic-h" type="number" data-path="floor_bounce.mic_height_m" data-length><span data-unit></span></span>
+        </div>
+        <p class="readout" data-text="bounce_text"></p>
+      </section>
     </section>
   </main>
 
+  <dialog id="dialog">
+    <form method="dialog">
+      <h2 id="dialog-title"></h2>
+      <div id="dialog-body"></div>
+      <div class="buttons end">
+        <button value="cancel" id="dialog-cancel">Cancel</button>
+        <button value="ok" id="dialog-ok" class="primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <footer class="app-footer">
-    Array math reimplements Merlijn van Veen's
-    <a href="https://www.merlijnvanveen.nl/" rel="noopener">S.A.D. (Subwoofer Array Designer)</a>.
-    Verify array behaviour in a prediction tool before use.
-    · <a href="selftest.html">Engine self-test</a>
-    · <a href="https://buymeacoffee.com/fohengineer" rel="noopener">Buy me a coffee</a>
+    <p>Array math reimplements Merlijn van Veen's
+      <a href="https://www.merlijnvanveen.nl/" rel="noopener">S.A.D. (Subwoofer Array Designer)</a>.
+      No polar/SPL prediction here: verify array behaviour in a prediction tool before use.</p>
+    <p class="warn-text">100% vibe coded — use at your own risk, check all calculations before use.</p>
+    <p>S.A.D. Realtime — freekieaudio.uk · <a href="selftest.html">Engine self-test</a> ·
+      <a href="https://buymeacoffee.com/fohengineer" rel="noopener">☕ Buy me a coffee</a></p>
   </footer>
 </body>
 </html>

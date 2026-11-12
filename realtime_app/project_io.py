@@ -119,8 +119,12 @@ def build_project_dict(app) -> dict:
             "prealign": {
                 "active": app.prealign_active,
                 "contribution_ms": app.prealign_contribution_ms,
-                "main_system": app.prealign_main.get() if app.prealign_active and hasattr(app, "prealign_main") else "",
-                "sub_system": app.prealign_sub.get() if app.prealign_active and hasattr(app, "prealign_main") else "",
+                # The preset the active delay came from (set by Use or Load),
+                # not whatever the dropdowns show now -- they can be changed
+                # without pressing Use, and can't show a preset that isn't in
+                # the CSV any more.
+                "main_system": getattr(app, "prealign_systems", ("", ""))[0] if app.prealign_active else "",
+                "sub_system": getattr(app, "prealign_systems", ("", ""))[1] if app.prealign_active else "",
             },
         },
         "sub_box": {
@@ -358,6 +362,11 @@ def apply_project_dict(app, data: dict) -> list[str]:
         app.prealign_contribution_ms = 0.0
     main_system = prealign.get("main_system", "")
     sub_system = prealign.get("sub_system", "")
+    if not isinstance(main_system, str):
+        main_system = ""
+    if not isinstance(sub_system, str):
+        sub_system = ""
+    app.prealign_systems = (main_system, sub_system) if app.prealign_active else ("", "")
     if app.prealign_active and main_system:
         found_entry = None
         if hasattr(app, "prealign_main"):

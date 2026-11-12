@@ -23,6 +23,7 @@ export const SHARED_FILES = [
   "shared/prealign_profiles.py",
   "shared/prealign_delays.csv",
   "web/py/bridge.py",
+  "web/py/model.py",
 ];
 
 const FS_ROOT = "/sadrt";

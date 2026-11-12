@@ -20,6 +20,9 @@ python realtime_app/sad_realtime_osc.py
 # Regression check of the shared math (run from repo root)
 python tests/check_parity.py
 
+# Desktop UI vs web model check (headless Tk; run from repo root)
+python tests/check_web_model.py
+
 # After an INTENDED math change: regenerate, then review the JSON diff
 python tests/generate_parity_cases.py
 
@@ -158,7 +161,8 @@ Before shipping a topology change, create a simple test case in S.A.D., note the
   - Project save/load: `project_io.py` (reads/writes Tkinter variables)
   - Changelog: `CHANGELOG.md` (covers both apps; keep in step with `shared/version.py`)
   - Docs: `README.md` (comprehensive user guide)
-- `web/`: browser app (GitHub Pages). `index.html` + `js/app.js` (UI), `js/engine.js` + `py/bridge.py` (Pyodide bridge), `selftest.html` (in-browser parity run), `sw.js` + `manifest.webmanifest` (offline PWA). Design/Setup/Alignment tabs are skeletons; the Design tab currently has only an End-Fire engine preview.
+- `web/`: browser app (GitHub Pages). `index.html` + `js/app.js` (UI), `js/engine.js` + `py/bridge.py` (Pyodide bridge), `selftest.html` (in-browser parity run), `sw.js` + `manifest.webmanifest` (offline PWA). `py/model.py` holds the web UI logic in Python (state = `.sadrt` layout + a transient `ui` section; `dispatch(state, action)` returns new state + view); `js/app.js` only renders it through `data-*` bindings in `index.html`. Help texts are in `js/help.js` (ported from the desktop tooltips; keep in step).
+  - When desktop UI logic changes (readouts, helper buttons, load warnings), port it to `web/py/model.py` too and extend `tests/check_web_model.py`, which must report all scenarios identical.
 - `shared/version.py` (one version for both apps) and `shared/jsonable.py` (result → JSON, used by the bridge and the parity tests)
 - `tests/`: `parity_cases.json` + generator/checker; `parity_common.py` is stdlib-only so it can also run under Pyodide
 

@@ -5,6 +5,29 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Added: **full web UI**. The Design, Setup and Alignment tabs now have every
+control the desktop app has: all ten topologies, Manual mode with an
+editable table, level taper, the spacing/arc/ellipse helpers, group delay,
+Makeup, pre-alignment lookup, the Sub → tops wizard and floor bounce. The
+results table has Copy (tab-separated) and Export CSV in place of the OSC
+tab. New / Save / Load use `.sadrt` files that round-trip with the desktop
+app, and the last session is restored when the page reopens. The UI logic
+lives in `web/py/model.py` (Python, ported from the desktop), so the browser
+only draws what it returns. `tests/check_web_model.py` drives the desktop
+app headlessly beside the web model through 84 scenarios and checks every
+readout, table cell and saved file matches.
+
+Fixed (desktop, found by that check):
+- The Gain Trim column now shows each sub's computed gain. With Avoid Point
+  and an odd count it showed 0.00 while the math, OSC output and Gain + Group
+  carried the -3.52 dB balance correction. OSC values were always right.
+- Position and rotation readouts no longer show "-0.00" for a value that
+  rounds to zero (e.g. the centre sub's depth in an odd-count arc).
+- Save records the pre-alignment preset the active delay came from (set by
+  Use or Load). Before, it saved whatever the dropdowns showed, so changing
+  them after Use, or loading a file whose preset isn't in the CSV, saved the
+  wrong names. Delay values were not affected.
+
 Added: **web app skeleton** in `web/`. It runs the shared `array_math.py` in
 the browser via Pyodide (Python 3.12 in WebAssembly, loaded from jsDelivr
 and pinned to 0.27.2), so there is no separate JavaScript math. It currently
