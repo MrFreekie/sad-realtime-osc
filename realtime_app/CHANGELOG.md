@@ -5,93 +5,83 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
-Changed (both apps): Manual mode's typed Gain trim is now limited to
-−40..+18 dB, the same range as Group level. Before, a typo such as 999 dB
-went straight into the math and, on the desktop, the OSC output. Out-of-range
-values are pulled in when the cell is committed (Enter or clicking away),
-and the desktop never uses an out-of-range value even mid-typing. Loading
-a `.sadrt` file clamps them too and warns: "Manual gain trim out of range on
-N sub(s)". Non-finite Manual values in a file (inf/nan) are now skipped on
-load, like other invalid entries. `check_web_model.py` gained a "manual gain
-clamp" scenario and Manual gains in its messy-file case (86 scenarios).
 
-Fixed (web app only; found by the new `web-checker` agent):
-- Clearing a number field and pressing Enter or clicking away stored the
-  field's minimum. For example, a blank Spacing became 0.001 m and every
-  delay collapsed. A blank field now keeps its last value, as in the
-  desktop app. This applies to every number field, Group distance and the
-  Manual table cells.
-- A value the app limited (e.g. Count 999 → 48) kept showing what was typed
-  until the page was reloaded. Fields now show the value actually used as
-  soon as they commit.
-- In Manual mode at about 1024 px wide, the whole page scrolled sideways.
-  The table now scrolls inside its own box.
-- Help popovers near the bottom of the window ran off screen. They now
-  flip above the button, or shift up, so they stay inside the window.
+## [0.10.0] - 2026-11-12
+The **web app** is new in this release: https://mrfreekie.github.io/sad-realtime-osc/
+There are no changes to the array math; every topology gives the same
+delay, gain and polarity as 0.9.5.
 
-Changed (web app): on every online visit the offline cache now asks the
-server whether each app file changed, instead of trusting the browser's
-own cache. A new version shows on the next reload after a deploy, not up
-to 10 minutes later. An unchanged file costs a small "not modified"
-reply. With no network, the app still loads from the offline cache.
+Added: **web app** (`web/`, published on GitHub Pages).
+- **Controls:** the Design, Setup and Alignment tabs have every control the
+  desktop app has:
+  - all ten topologies;
+  - Manual mode with an editable table;
+  - level taper and the spacing/arc/ellipse helpers;
+  - group delay, Makeup and the pre-alignment lookup;
+  - the Sub → tops wizard and floor bounce.
+- **No OSC:** the results table has Copy (tab-separated) and Export CSV in
+  place of the OSC tab.
+- **Files:** New / Save / Load use `.sadrt` files that open in either app,
+  and the last session comes back when the page reopens.
+- **Same math:** it runs the same `array_math.py` in the browser via Pyodide
+  (Python 3.12 in WebAssembly, pinned to 0.27.2), so there is no separate
+  JavaScript math. The UI logic is Python too (`web/py/model.py`, ported
+  from the desktop app), and the browser only draws what it returns.
+- **Offline:** it works offline at venues after one online visit. Each
+  online visit checks the server for changed files, so a new version shows
+  on the next reload.
+- **Self-test:** `web/selftest.html` runs every parity case in the browser.
+- **Early live deploys:** fixes made after the first live deploys on the same
+  day are part of this release:
+  - a blank number field no longer turns into the field's minimum;
+  - limited values show in the field;
+  - no sideways scroll in Manual mode at 1024 px;
+  - help popovers stay on screen.
 
-Added: **GitHub Pages deploy and CI** (`.github/workflows/pages.yml`).
-Every push and pull request runs three checks: the parity cases in desktop
-Python, `check_web_model.py` (headless Tk under xvfb), and the parity cases
-again in Pyodide under Node (`tests/check_pyodide.mjs`). That last check
-uses the npm package at the version pinned in `engine.js` and fails if
-`sw.js` pins a different one. Pushes to master then publish the web app.
-The site holds only `index.html` (a redirect to `web/`), `web/`, `shared/`
-and the two parity files the self-test loads. A short root `README.md`
-points to both apps.
+Changed (both apps): Manual mode's typed Gain trim is limited to −40..+18 dB,
+the same range as Group level. Before, a typo such as 999 dB went straight
+into the math and, on the desktop, the OSC output.
+- Typing: out-of-range values are pulled in when the cell is committed
+  (Enter or clicking away). The desktop never uses an out-of-range value,
+  even mid-typing.
+- Loading a `.sadrt` file clamps them too, with the warning "Manual gain
+  trim out of range on N sub(s)".
+- Non-finite Manual values in a file (inf/nan) are skipped on load, like
+  other invalid entries.
 
-Added: **full web UI**. The Design, Setup and Alignment tabs now have every
-control the desktop app has: all ten topologies, Manual mode with an
-editable table, level taper, the spacing/arc/ellipse helpers, group delay,
-Makeup, pre-alignment lookup, the Sub → tops wizard and floor bounce. The
-results table has Copy (tab-separated) and Export CSV in place of the OSC
-tab. New / Save / Load use `.sadrt` files that round-trip with the desktop
-app, and the last session is restored when the page reopens. The UI logic
-lives in `web/py/model.py` (Python, ported from the desktop), so the browser
-only draws what it returns. `tests/check_web_model.py` drives the desktop
-app headlessly beside the web model through 84 scenarios and checks every
-readout, table cell and saved file matches.
-
-Fixed (desktop, found by that check):
+Fixed (desktop):
 - The Gain Trim column now shows each sub's computed gain. With Avoid Point
   and an odd count it showed 0.00 while the math, OSC output and Gain + Group
-  carried the -3.52 dB balance correction. OSC values were always right.
+  carried the −3.52 dB balance correction. OSC values were always right.
 - Position and rotation readouts no longer show "-0.00" for a value that
   rounds to zero (e.g. the centre sub's depth in an odd-count arc).
 - Save records the pre-alignment preset the active delay came from (set by
-  Use or Load). Before, it saved whatever the dropdowns showed, so changing
+  Use or Load). Before, it saved whatever the dropdowns showed. Changing
   them after Use, or loading a file whose preset isn't in the CSV, saved the
   wrong names. Delay values were not affected.
 
-Added: **web app skeleton** in `web/`. It runs the shared `array_math.py` in
-the browser via Pyodide (Python 3.12 in WebAssembly, loaded from jsDelivr
-and pinned to 0.27.2), so there is no separate JavaScript math. It currently
-has Design / Setup / Alignment tabs (Setup and Alignment are still
-placeholders), an End-Fire preview that recomputes live, and an offline
-service worker. After one online visit the app loads with no network at all
-(tested with the local server stopped). `web/selftest.html` runs every
-parity case in the browser: 115/115 match the desktop Python.
+Changed (repo and structure; the desktop app behaves as before):
+- One repo holds both apps:
+  - `realtime_app/` (desktop);
+  - `web/` (browser);
+  - `shared/`, used by both: `array_math.py`, the profile modules and their
+    CSVs, moved there byte-identical.
+- `sad_realtime_osc.py` adds `../shared` to the import path at startup.
+- The version number lives in `shared/version.py`, one for both apps.
+- A short root `README.md` points to both apps.
 
-Changed: the version number moved to `shared/version.py` so both apps show
-the same one (`sad_realtime_osc.py` imports it; the title bar and saved
-`.sadrt` files are unchanged). The result-to-JSON helper moved to
-`shared/jsonable.py`.
-
-Changed (structure only, no behaviour change): `array_math.py`,
-`sub_profiles.py`, `prealign_profiles.py` and both CSVs moved to the repo's
-`shared/` folder so the upcoming browser version runs the same files.
-`sad_realtime_osc.py` adds `../shared` to the import path at startup. The
-moved files are byte-identical to 0.9.5.
-
-Added: `tests/parity_cases.json` (115 cases across every topology, layout,
-taper window and helper) with `tests/check_parity.py` to re-run them and
-`tests/generate_parity_cases.py` to regenerate after an intended math
-change. It's a regression snapshot, not ground truth.
+Added (checks):
+- `tests/parity_cases.json`: 115 snapshot cases across every topology,
+  layout, taper window and helper. `tests/check_parity.py` re-runs them, and
+  `tests/generate_parity_cases.py` regenerates them after an intended math
+  change. They are a regression snapshot, not ground truth.
+- `tests/check_web_model.py` runs the desktop app without a window beside
+  the web model through 86 scenarios. It checks that every readout, table
+  cell and saved file is identical.
+- `tests/check_pyodide.mjs` runs the parity cases in Pyodide under Node.
+- `.github/workflows/pages.yml` runs all three on every push and pull
+  request, and publishes the web app from master when they pass.
+- New `web-checker` agent for browser-side QA of the web app.
 
 ## [0.9.5] - 2026-09-30
 Added: a "Buy me a coffee" link (buymeacoffee.com/fohengineer) at the bottom of
