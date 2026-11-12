@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S.A.D. Realtime</title>
+  <meta name="description" content="Subwoofer array delay, gain and polarity calculator, based on Merlijn van Veen's S.A.D.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#1a1e24">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>S.A.D. Realtime</h1>
+    <span class="version" id="version"></span>
+    <span class="spacer"></span>
+    <span class="status" id="status" role="status" aria-live="polite">Starting…</span>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" aria-selected="true" aria-controls="tab-design" id="t-design">Design</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-setup" id="t-setup">Setup</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-alignment" id="t-alignment">Alignment</button>
+  </nav>
+
+  <main>
+    <section id="tab-design" role="tabpanel" aria-labelledby="t-design">
+      <div class="grid-2">
+        <form class="panel" id="demo-form" autocomplete="off">
+          <h2>End-Fire (engine preview)</h2>
+          <fieldset id="demo-controls" disabled>
+            <div class="field">
+              <label for="count">Subs</label><output for="count" id="count-out"></output>
+              <input type="range" id="count" min="1" max="16" step="1" value="6">
+            </div>
+            <div class="field">
+              <label for="spacing">Spacing</label><output for="spacing" id="spacing-out"></output>
+              <input type="range" id="spacing" min="0.3" max="3" step="0.01" value="1.2">
+            </div>
+            <div class="field">
+              <label for="temp">Temperature</label><output for="temp" id="temp-out"></output>
+              <input type="range" id="temp" min="-10" max="40" step="0.5" value="20">
+            </div>
+          </fieldset>
+          <p class="muted" id="demo-meta"></p>
+        </form>
+
+        <div class="panel">
+          <h2>Per-sub output</h2>
+          <table class="results" aria-describedby="demo-meta">
+            <thead><tr><th scope="col">Sub</th><th scope="col">Delay (ms)</th><th scope="col">Gain (dB)</th><th scope="col">Polarity</th></tr></thead>
+            <tbody id="results"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-setup" role="tabpanel" aria-labelledby="t-setup" hidden>
+      <div class="panel placeholder">Setup controls are not built yet.</div>
+    </section>
+
+    <section id="tab-alignment" role="tabpanel" aria-labelledby="t-alignment" hidden>
+      <div class="panel placeholder">Alignment tools are not built yet.</div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    Array math reimplements Merlijn van Veen's
+    <a href="https://www.merlijnvanveen.nl/" rel="noopener">S.A.D. (Subwoofer Array Designer)</a>.
+    Verify array behaviour in a prediction tool before use.
+    · <a href="selftest.html">Engine self-test</a>
+    · <a href="https://buymeacoffee.com/fohengineer" rel="noopener">Buy me a coffee</a>
+  </footer>
+</body>
+</html>

@@ -1,33 +1,32 @@
 """Helpers shared by the parity generator and checker.
 
 Kept free of anything but the standard library so the same file can run
-under Pyodide in the browser.
+under Pyodide in the browser (web/selftest.html). Expects shared/ on
+sys.path, for jsonable.
 """
 
-import dataclasses
 import math
+
+from jsonable import to_jsonable  # noqa: F401  (re-exported for callers)
 
 REL_TOL = 1e-9
 ABS_TOL = 1e-9
 
 
-def to_jsonable(value):
-    """Convert array_math results to plain JSON (no NaN/inf, which JSON lacks)."""
-    if dataclasses.is_dataclass(value):
-        d = {"_type": type(value).__name__}
-        d.update({f.name: to_jsonable(getattr(value, f.name)) for f in dataclasses.fields(value)})
-        return d
-    if isinstance(value, (list, tuple)):
-        return [to_jsonable(v) for v in value]
-    if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
-        return value
-    if isinstance(value, float):
-        if math.isnan(value):
-            return {"_float": "nan"}
-        if math.isinf(value):
-            return {"_float": "inf" if value > 0 else "-inf"}
-        return value
-    raise TypeError(f"can't serialise {type(value).__name__}: {value!r}")
+def run_cases(array_math, cases):
+    """Re-run parity cases; returns a list of (case_id, [mismatch, ...])."""
+    failures = []
+    for c in cases:
+        try:
+            fn = getattr(array_math, c["fn"])
+            actual = to_jsonable(fn(*c["args"], **c["kwargs"]))
+        except Exception as e:  # report and keep going
+            failures.append((c["id"], [f"raised {type(e).__name__}: {e}"]))
+            continue
+        diffs = compare(c["expected"], actual)
+        if diffs:
+            failures.append((c["id"], diffs))
+    return failures
 
 
 def compare(expected, actual, path="result"):

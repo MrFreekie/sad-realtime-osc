@@ -1,9 +1,24 @@
 # Changelog
 
-All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
-[sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
+All notable changes to S.A.D. Realtime (desktop and web) are logged here.
+Bump `__version__` in [shared/version.py](../shared/version.py) alongside
+each entry.
 
 ## [Unreleased]
+Added: **web app skeleton** in `web/`. It runs the shared `array_math.py` in
+the browser via Pyodide (Python 3.12 in WebAssembly, loaded from jsDelivr
+and pinned to 0.27.2), so there is no separate JavaScript math. It currently
+has Design / Setup / Alignment tabs (Setup and Alignment are still
+placeholders), an End-Fire preview that recomputes live, and an offline
+service worker. After one online visit the app loads with no network at all
+(tested with the local server stopped). `web/selftest.html` runs every
+parity case in the browser: 115/115 match the desktop Python.
+
+Changed: the version number moved to `shared/version.py` so both apps show
+the same one (`sad_realtime_osc.py` imports it; the title bar and saved
+`.sadrt` files are unchanged). The result-to-JSON helper moved to
+`shared/jsonable.py`.
+
 Changed (structure only, no behaviour change): `array_math.py`,
 `sub_profiles.py`, `prealign_profiles.py` and both CSVs moved to the repo's
 `shared/` folder so the upcoming browser version runs the same files.

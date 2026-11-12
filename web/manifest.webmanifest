@@ -1,0 +1,13 @@
+{
+  "name": "S.A.D. Realtime",
+  "short_name": "S.A.D. RT",
+  "description": "Subwoofer array delay, gain and polarity calculator, based on Merlijn van Veen's S.A.D.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111418",
+  "theme_color": "#1a1e24",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

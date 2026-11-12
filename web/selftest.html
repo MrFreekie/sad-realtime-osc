@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engine Self-Test</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/selftest.js"></script>
+  <style>
+    .summary { font-size: 18px; font-weight: 650; margin: 0 0 6px; }
+    .summary[data-state="pass"] { color: var(--ok); }
+    .summary[data-state="fail"] { color: var(--bad); }
+    pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; background: var(--surface-2); padding: 12px; border-radius: var(--radius); }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Engine self-test</h1>
+    <span class="spacer"></span>
+    <span class="status" id="status" role="status" aria-live="polite">Starting…</span>
+  </header>
+  <main>
+    <div class="panel">
+      <p class="summary" id="summary">Running…</p>
+      <p class="muted">
+        Runs every case in <code>tests/parity_cases.json</code> through <code>shared/array_math.py</code>
+        in this browser and compares with the values the desktop app's Python produced (tolerance 1e-9).
+        A pass means the web app computes the same delays, gains and polarities as the desktop app.
+      </p>
+      <p class="muted" id="meta"></p>
+      <pre id="failures" hidden></pre>
+      <p><a href="./">Back to the app</a></p>
+    </div>
+  </main>
+</body>
+</html>

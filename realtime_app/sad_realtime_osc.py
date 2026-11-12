@@ -24,7 +24,6 @@ Run:
     pip install python-osc
     python sad_realtime_osc.py
 """
-__version__ = "0.9.5"
 SUPPORT_URL = "https://buymeacoffee.com/fohengineer"
 
 import copy
@@ -38,6 +37,8 @@ import webbrowser
 # importable no matter which folder this script is launched from.
 _SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "shared")
 sys.path.insert(0, os.path.normpath(_SHARED_DIR))
+
+from version import __version__  # noqa: E402  (one version for desktop + web)
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox

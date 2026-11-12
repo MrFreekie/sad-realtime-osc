@@ -16,28 +16,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "shared"))
 
 import array_math  # noqa: E402
-from parity_common import compare, to_jsonable  # noqa: E402
-
-
-def run(cases):
-    failures = []
-    for c in cases:
-        try:
-            fn = getattr(array_math, c["fn"])
-            actual = to_jsonable(fn(*c["args"], **c["kwargs"]))
-        except Exception as e:  # report and keep going
-            failures.append((c["id"], [f"raised {type(e).__name__}: {e}"]))
-            continue
-        diffs = compare(c["expected"], actual)
-        if diffs:
-            failures.append((c["id"], diffs))
-    return failures
+from parity_common import run_cases  # noqa: E402
 
 
 def main():
     with open(os.path.join(HERE, "parity_cases.json"), encoding="utf-8") as f:
         cases = json.load(f)["cases"]
-    failures = run(cases)
+    failures = run_cases(array_math, cases)
     for case_id, diffs in failures:
         print(f"FAIL {case_id}")
         for d in diffs[:5]:

@@ -23,7 +23,12 @@ python tests/check_parity.py
 # After an INTENDED math change: regenerate, then review the JSON diff
 python tests/generate_parity_cases.py
 
-# Current version is in realtime_app/sad_realtime_osc.py:__version__
+# Web app: serve the REPO ROOT (not web/), then open http://127.0.0.1:8780/web/
+# (also configured as "web" in .claude/launch.json). Port 8765 is used by another local server.
+python -m http.server 8780 --bind 127.0.0.1
+# Browser parity check: http://127.0.0.1:8780/web/selftest.html must show 115/115
+
+# Current version (both apps) is in shared/version.py:__version__
 ```
 
 No build step or linter. Both apps run directly from source.
@@ -34,6 +39,9 @@ This repo holds two front ends for the same calculator:
 
 - **Desktop app** (`realtime_app/`): Tkinter + OSC output. The live-show tool.
 - **Web app** (`web/`, in progress): plain HTML/JS on GitHub Pages, no OSC, no build step. It runs `shared/array_math.py` in the browser via Pyodide, so there is no JS copy of the math. It is a laptop layout and works offline as a PWA.
+  - `web/js/engine.js` loads Pyodide from jsDelivr (pinned version) and mounts the `shared/` files into its virtual filesystem. JS calls math only through `engine.call("<array_math function>", args, kwargs)`, which goes via `web/py/bridge.py` (JSON in, JSON out, structured errors, public `array_math` functions only).
+  - `web/sw.js` is the offline service worker. App files are network-first with a 4 s timeout, then cache. The Pyodide runtime is cache-first. **The Pyodide version is pinned in both `engine.js` and `sw.js`; change them together.** If you add a file the web app loads, add it to `SHARED_FILES` in `engine.js` and `APP_FILES` in `sw.js`.
+  - The site keeps the repo's folder layout (`web/` beside `shared/` and `tests/`), so relative paths like `../shared/` work the same locally and on Pages.
 
 **Sync rule: every feature or math change lands in both apps in the same change.**
 1. Math goes in `shared/array_math.py` only. Never fork or port it into JS.
@@ -146,13 +154,14 @@ Before shipping a topology change, create a simple test case in S.A.D., note the
   - Core math: `array_math.py` (no UI/OSC imports, stdlib only)
   - Profiles: `sub_profiles.py` + `sub_profiles.csv`, `prealign_profiles.py` + `prealign_delays.csv`
 - `realtime_app/`: desktop app
-  - Entry point: `sad_realtime_osc.py` (contains `__version__`; adds `../shared` to `sys.path`)
+  - Entry point: `sad_realtime_osc.py` (adds `../shared` to `sys.path`, imports `__version__` from `shared/version.py`)
   - Project save/load: `project_io.py` (reads/writes Tkinter variables)
-  - Changelog: `CHANGELOG.md` (covers both apps; sync `__version__` here when releasing)
+  - Changelog: `CHANGELOG.md` (covers both apps; keep in step with `shared/version.py`)
   - Docs: `README.md` (comprehensive user guide)
-- `web/`: browser app (GitHub Pages), not built yet
+- `web/`: browser app (GitHub Pages). `index.html` + `js/app.js` (UI), `js/engine.js` + `py/bridge.py` (Pyodide bridge), `selftest.html` (in-browser parity run), `sw.js` + `manifest.webmanifest` (offline PWA). Design/Setup/Alignment tabs are skeletons; the Design tab currently has only an End-Fire engine preview.
+- `shared/version.py` (one version for both apps) and `shared/jsonable.py` (result → JSON, used by the bridge and the parity tests)
 - `tests/`: `parity_cases.json` + generator/checker; `parity_common.py` is stdlib-only so it can also run under Pyodide
 
 The repo root also holds S.A.D. spreadsheets and reference material for the math. They are git-ignored and never published.
 
-Version bumps: update `__version__` in `realtime_app/sad_realtime_osc.py` and add a changelog entry. No tagging or release process yet.
+Version bumps: update `__version__` in `shared/version.py` (both apps read it) and add a changelog entry. No tagging or release process yet.
