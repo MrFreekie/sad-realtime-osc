@@ -3,6 +3,18 @@
 All notable changes to S.A.D. Realtime are logged here. Bump `__version__` in
 [sad_realtime_osc.py](sad_realtime_osc.py) alongside each entry.
 
+## [Unreleased]
+Changed (structure only, no behaviour change): `array_math.py`,
+`sub_profiles.py`, `prealign_profiles.py` and both CSVs moved to the repo's
+`shared/` folder so the upcoming browser version runs the same files.
+`sad_realtime_osc.py` adds `../shared` to the import path at startup. The
+moved files are byte-identical to 0.9.5.
+
+Added: `tests/parity_cases.json` (115 cases across every topology, layout,
+taper window and helper) with `tests/check_parity.py` to re-run them and
+`tests/generate_parity_cases.py` to regenerate after an intended math
+change. It's a regression snapshot, not ground truth.
+
 ## [0.9.5] - 2026-09-30
 Added: a "Buy me a coffee" link (buymeacoffee.com/fohengineer) at the bottom of
 the app window -- click opens it in the browser -- and in the README (top and a

@@ -1,2 +1,17 @@
+# Reference material (Merlijn van Veen's S.A.D. spreadsheets, manuals,
+# third-party tools). Kept locally for verification, never published.
+*.xlsx
+*.xlsm
+*.xls
+*.pdf
+
+# Python
 __pycache__/
 *.pyc
+
+# Local Claude Code settings (personal permissions)
+.claude/settings.local.json
+
+# Saved projects from testing
+*.sadrt
+!tests/**/*.sadrt

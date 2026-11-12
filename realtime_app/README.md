@@ -505,7 +505,7 @@ Array/Progressive Arc, same reasoning as above):
 
 ### Sub profiles (`sub_profiles.csv`)
 
-Named box dimensions live in `sub_profiles.csv`, next to the app —
+Named box dimensions live in `shared/sub_profiles.csv` (shared with the web version) —
 columns `name,width_m,depth_m`. Add a row to add a profile; no code
 changes needed. If the file is missing, empty, or a row fails to parse,
 `sub_profiles.py` falls back to a small built-in default list (currently
@@ -628,7 +628,7 @@ Two separate coloured indicators, one per system:
 
 ### Pre-alignment data (`prealign_delays.csv`)
 
-Combos live in `prealign_delays.csv`, next to the app — columns
+Combos live in `shared/prealign_delays.csv` (shared with the web version) — columns
 `main_system,sub_system,main_delay_ms,sub_delay_ms,main_polarity,
 sub_polarity,main_config,sub_config,notes` (`*_polarity` is
 `positive`/`negative`, aliases `normal`/`reversed`/`+`/`-` also
@@ -1028,14 +1028,23 @@ Veen's — see Credits above; consider supporting his work too.
 
 ## Files
 
+The math and profile data are shared with the browser version of this app,
+so they live in the repo's `shared/` folder rather than next to the app.
+`sad_realtime_osc.py` adds `../shared` to Python's import path itself, so
+run it from anywhere as before.
+
+In `shared/`:
 - `array_math.py` — pure functions, no UI/OSC dependencies. Safe to unit
-  test or reuse elsewhere.
-- `sad_realtime_osc.py` — Tkinter UI + OSC client.
+  test or reuse elsewhere. The web version runs this exact file in the
+  browser.
 - `sub_profiles.py` / `sub_profiles.csv` — named sub box dimension
   profiles for the collision check, editable without touching code.
 - `prealign_profiles.py` / `prealign_delays.csv` — L-Acoustics factory
   pre-alignment delay values for the Pre-alignment delay lookup panel,
   editable without touching code.
+
+In `realtime_app/`:
+- `sad_realtime_osc.py` — Tkinter UI + OSC client.
 - `project_io.py` — save/load `.sadrt` project files (see Project section
   above). No UI dependency of its own beyond reading/writing the App's
   Tkinter variables.

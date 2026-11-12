@@ -30,7 +30,15 @@ SUPPORT_URL = "https://buymeacoffee.com/fohengineer"
 import copy
 import ctypes
 import os
+import sys
 import webbrowser
+
+# The math and the profile CSVs live in ../shared so the web app (web/, run
+# in the browser via Pyodide) uses exactly the same files. Make them
+# importable no matter which folder this script is launched from.
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "shared")
+sys.path.insert(0, os.path.normpath(_SHARED_DIR))
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
