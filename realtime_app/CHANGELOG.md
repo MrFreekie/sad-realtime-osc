@@ -5,6 +5,16 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Changed (both apps): Manual mode's typed Gain trim is now limited to
+−40..+18 dB, the same range as Group level. Before, a typo such as 999 dB
+went straight into the math and, on the desktop, the OSC output. Out-of-range
+values are pulled in when the cell is committed (Enter or clicking away),
+and the desktop never uses an out-of-range value even mid-typing. Loading
+a `.sadrt` file clamps them too and warns: "Manual gain trim out of range on
+N sub(s)". Non-finite Manual values in a file (inf/nan) are now skipped on
+load, like other invalid entries. `check_web_model.py` gained a "manual gain
+clamp" scenario and Manual gains in its messy-file case (86 scenarios).
+
 Fixed (web app only; found by the new `web-checker` agent):
 - Clearing a number field and pressing Enter or clicking away stored the
   field's minimum. For example, a blank Spacing became 0.001 m and every

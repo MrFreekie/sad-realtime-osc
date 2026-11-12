@@ -226,6 +226,14 @@ ACTIONS = [
      lambda a: (a._set_arc_from_venue(), a._use_venue_ellipse_ratio())),
     ("alignment set", [S("alignment_wizard.mains_distance_m", 35), S("alignment_wizard.sub_distance_m", 30)],
      [{"type": "set_group_from_alignment"}], lambda a: a._set_group_delay_from_alignment()),
+    # Typed Manual gain trims outside -40..+18 dB are pulled into range on commit.
+    ("manual gain clamp", [S("array.topology", "manual"), S("array.count", 4)],
+     [{"type": "manual", "row": 1, "field": "gain_db", "value": 999},
+      {"type": "manual", "row": 2, "field": "gain_db", "value": -100},
+      {"type": "manual", "row": 3, "field": "gain_db", "value": 17.5}],
+     # (typing runs _schedule_change on every key; set() alone doesn't, so _on_change stands in)
+     lambda a: [(a.manual_gain_vars[i].set(v), a._on_change(), a._commit_manual_gain(a.manual_gain_vars[i]))
+                for i, v in ((1, 999.0), (2, -100.0), (3, 17.5))]),
 ]
 
 
@@ -273,7 +281,8 @@ def main():
     messy = {"schema_version": 9, "array": {"topology": "nope", "count": 99, "angle_deg": 500, "steer_deg": "x"},
              "level_taper": {"window": "Kaiser"}, "units": {"length_unit": "ft"}, "dsp": {"sample_rate_hz": 44100},
              "environment": {"temp_c": 99}, "group": {"level_db": 40, "prealign": {"active": True,
-             "main_system": "ZZ", "sub_system": "YY", "contribution_ms": 1.5}}}
+             "main_system": "ZZ", "sub_system": "YY", "contribution_ms": 1.5}},
+             "manual": {"gain_db": [999, -100, 3, "x", 18.0001]}}
     app = desk.App()
     app.withdraw()
     dw = project_io.apply_project_dict(app, copy.deepcopy(messy))

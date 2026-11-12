@@ -201,6 +201,17 @@ _WINDOW_CHROME_MARGIN = 80
 _MIN_WINDOW_HEIGHT = 200
 
 
+# Manual mode's typed Gain trim, per sub: same range as Group level. Keeps a
+# typo (999 dB) from reaching the math or the OSC output. The web app's
+# model.py uses the same numbers; project_io clamps loaded files to them.
+MANUAL_GAIN_MIN_DB = -40.0
+MANUAL_GAIN_MAX_DB = 18.0
+
+
+def clamp_manual_gain(value):
+    return max(MANUAL_GAIN_MIN_DB, min(MANUAL_GAIN_MAX_DB, value))
+
+
 def _fmt(value, decimals):
     """Fixed-decimal readout that never shows "-0.00" for a value that
     rounds to zero (e.g. the centre sub of an odd-count arc)."""
@@ -1392,6 +1403,18 @@ class App(tk.Tk):
         self._set_prealign_note(main_sys, sub_sys, main_ms, sub_pol)
         self._on_change()
 
+    def _commit_manual_gain(self, var):
+        """Enter/focus-out on a Manual Gain trim cell: pull an out-of-range
+        value into MANUAL_GAIN_MIN_DB..MAX_DB so the cell shows what's used."""
+        try:
+            value = var.get()
+        except tk.TclError:
+            return  # blank/mid-edit: _compute already treats it as invalid
+        clamped = clamp_manual_gain(value)
+        if clamped != value:
+            var.set(clamped)
+            self._on_change()
+
     def _clear_prealign_delay(self):
         if not self.prealign_active:
             return
@@ -2340,6 +2363,9 @@ class App(tk.Tk):
             if editable_all:
                 gain_widget = ttk.Entry(self.table_frame, textvariable=self.manual_gain_vars[i], width=10)
                 gain_widget.bind("<KeyRelease>", lambda e: self._schedule_change())
+                # On commit, show the clamped value the math is already using.
+                gain_widget.bind("<Return>", lambda e, v=self.manual_gain_vars[i]: self._commit_manual_gain(v))
+                gain_widget.bind("<FocusOut>", lambda e, v=self.manual_gain_vars[i]: self._commit_manual_gain(v))
             else:
                 # Read-only here -- for the computed topologies, trim is set via the
                 # Level taper panel's "Apply to Gain trim", not typed in the table.
@@ -2697,7 +2723,7 @@ class App(tk.Tk):
             if topo == TOPO_MANUAL:
                 n = self.count.get()
                 depths = [v.get() for v in self._manual_depth_vars()]
-                gains = [v.get() for v in self.manual_gain_vars]
+                gains = [clamp_manual_gain(v.get()) for v in self.manual_gain_vars]
                 pols = [v.get() for v in self.manual_pol_vars]
                 delays = delays_from_depth(depths, self._speed_of_sound())
                 return manual(n, delays, gains, pols)

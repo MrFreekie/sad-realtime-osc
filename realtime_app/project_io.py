@@ -488,18 +488,30 @@ def apply_project_dict(app, data: dict) -> list[str]:
         v.set(0.0)
     for v in app.manual_pol_vars:
         v.set(False)
+    from sad_realtime_osc import MANUAL_GAIN_MIN_DB, MANUAL_GAIN_MAX_DB
+    gain_range = (MANUAL_GAIN_MIN_DB, MANUAL_GAIN_MAX_DB)
+    clamped_gains = 0
     for vars_list, key, clamp_range in (
         (app.manual_x_vars, "x_m", None),
         (app.manual_y_vars, "y_m", None),
-        (app.manual_gain_vars, "gain_db", None),
+        (app.manual_gain_vars, "gain_db", gain_range),
     ):
         values = manual.get(key)
         if isinstance(values, list):
             for i in range(min(n, len(values))):
                 try:
-                    vars_list[i].set(float(values[i]))
+                    value = float(values[i])
                 except (TypeError, ValueError):
-                    pass
+                    continue
+                if not math.isfinite(value):
+                    continue
+                if clamp_range and not clamp_range[0] <= value <= clamp_range[1]:
+                    value = max(clamp_range[0], min(clamp_range[1], value))
+                    clamped_gains += 1
+                vars_list[i].set(value)
+    if clamped_gains:
+        warnings.append(f"Manual gain trim out of range on {clamped_gains} sub(s) -- clamped to "
+                        f"{MANUAL_GAIN_MIN_DB:g}..+{MANUAL_GAIN_MAX_DB:g} dB.")
     reversed_values = manual.get("reversed")
     if isinstance(reversed_values, list):
         for i in range(min(n, len(reversed_values))):

@@ -137,6 +137,11 @@ def _put(state, path, value):
     node[keys[-1]] = value
 
 
+# Manual mode's typed Gain trim, per sub (sad_realtime_osc.MANUAL_GAIN_*_DB).
+MANUAL_GAIN_MIN_DB = -40.0
+MANUAL_GAIN_MAX_DB = 18.0
+
+
 def _num(value):
     """+0.0 for -0.0, so readouts never show "-0.00"."""
     return value + 0.0
@@ -457,6 +462,8 @@ def apply_action(state, action):
             else:
                 v = float(value)
                 if math.isfinite(v):
+                    if field == "gain_db":  # _commit_manual_gain
+                        v = max(MANUAL_GAIN_MIN_DB, min(MANUAL_GAIN_MAX_DB, v))
                     state["manual"][field][i] = _num(round(v, 3) if field != "gain_db" else v)
 
     elif kind == "group_distance":  # _on_group_distance_change
@@ -1241,14 +1248,24 @@ def from_project(state, data):
     manual_in = section("manual")
     rows = len(s["manual"]["x_m"])
     s["manual"] = {"x_m": [0.0] * rows, "y_m": [0.0] * rows, "gain_db": [0.0] * rows, "reversed": [False] * rows}
+    clamped_gains = 0
     for key in ("x_m", "y_m", "gain_db"):
         values = manual_in.get(key)
         if isinstance(values, list):
             for i in range(min(rows, len(values))):
                 try:
-                    s["manual"][key][i] = float(values[i])
+                    value = float(values[i])
                 except (TypeError, ValueError):
-                    pass
+                    continue
+                if not math.isfinite(value):
+                    continue
+                if key == "gain_db" and not MANUAL_GAIN_MIN_DB <= value <= MANUAL_GAIN_MAX_DB:
+                    value = max(MANUAL_GAIN_MIN_DB, min(MANUAL_GAIN_MAX_DB, value))
+                    clamped_gains += 1
+                s["manual"][key][i] = value
+    if clamped_gains:
+        warnings.append(f"Manual gain trim out of range on {clamped_gains} sub(s) -- clamped to "
+                        f"{MANUAL_GAIN_MIN_DB:g}..+{MANUAL_GAIN_MAX_DB:g} dB.")
     rev = manual_in.get("reversed")
     if isinstance(rev, list):
         for i in range(min(rows, len(rev))):
