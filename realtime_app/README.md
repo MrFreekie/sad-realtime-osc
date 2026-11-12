@@ -12,6 +12,9 @@ and streamed out over OSC.
 **100% vibe coded — use at your own risk, check all calculations before
 use.**
 
+There is also a **web version** (same math, no OSC, works offline):
+https://mrfreekie.github.io/sad-realtime-osc/
+
 ☕ Free to use. If it saves you time on a show, you can
 [buy me a coffee](https://buymeacoffee.com/fohengineer).
 

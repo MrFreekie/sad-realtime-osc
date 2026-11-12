@@ -1,0 +1,87 @@
+# Checks both apps' math on every push and pull request, then publishes the
+# web app to GitHub Pages from master.
+#
+# The published site is only: index.html (redirect to web/), web/, shared/,
+# and the two parity files web/selftest.html loads. The desktop app, docs and
+# the git-ignored S.A.D. reference files are never part of it.
+
+name: Checks and Pages
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install desktop app dependencies
+        run: |
+          pip install -r realtime_app/requirements.txt
+          sudo apt-get update -q && sudo apt-get install -yq xvfb
+
+      - name: Parity (desktop Python)
+        run: python tests/check_parity.py
+
+      - name: Desktop UI vs web model (headless Tk)
+        run: xvfb-run -a python tests/check_web_model.py
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Parity (Pyodide, the web app's Python)
+        run: |
+          VERSION=$(sed -n 's/^export const PYODIDE_VERSION = "\(.*\)";/\1/p' web/js/engine.js)
+          SW_VERSION=$(sed -n 's/^const PYODIDE_VERSION = "\(.*\)";/\1/p' web/sw.js)
+          if [ "$VERSION" != "$SW_VERSION" ]; then
+            echo "Pyodide pin differs: engine.js $VERSION, sw.js $SW_VERSION"; exit 1
+          fi
+          npm install --prefix "$RUNNER_TEMP/pyodide" --no-audit --no-fund "pyodide@$VERSION"
+          node tests/check_pyodide.mjs "$RUNNER_TEMP/pyodide"
+
+  deploy:
+    needs: checks
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}web/
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Stage site
+        run: |
+          mkdir -p _site/tests
+          cp index.html _site/
+          cp -r web shared _site/
+          cp tests/parity_common.py tests/parity_cases.json _site/tests/
+          find _site -name '__pycache__' -prune -exec rm -rf {} +
+          find _site -type f | sort
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

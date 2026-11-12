@@ -5,6 +5,16 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Added: **GitHub Pages deploy and CI** (`.github/workflows/pages.yml`).
+Every push and pull request runs three checks: the parity cases in desktop
+Python, `check_web_model.py` (headless Tk under xvfb), and the parity cases
+again in Pyodide under Node (`tests/check_pyodide.mjs`). That last check
+uses the npm package at the version pinned in `engine.js` and fails if
+`sw.js` pins a different one. Pushes to master then publish the web app.
+The site holds only `index.html` (a redirect to `web/`), `web/`, `shared/`
+and the two parity files the self-test loads. A short root `README.md`
+points to both apps.
+
 Added: **full web UI**. The Design, Setup and Alignment tabs now have every
 control the desktop app has: all ten topologies, Manual mode with an
 editable table, level taper, the spacing/arc/ellipse helpers, group delay,

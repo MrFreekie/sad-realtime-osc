@@ -23,6 +23,10 @@ python tests/check_parity.py
 # Desktop UI vs web model check (headless Tk; run from repo root)
 python tests/check_web_model.py
 
+# Parity inside Pyodide under Node (what CI runs; needs the npm package at the pinned version)
+npm install --prefix <dir> pyodide@0.27.2
+node tests/check_pyodide.mjs <dir>
+
 # After an INTENDED math change: regenerate, then review the JSON diff
 python tests/generate_parity_cases.py
 
@@ -35,6 +39,8 @@ python -m http.server 8780 --bind 127.0.0.1
 ```
 
 No build step or linter. Both apps run directly from source.
+
+**CI / deploy:** `.github/workflows/pages.yml` runs all three checks above on every push and PR, then deploys the web app to GitHub Pages from `master` (https://mrfreekie.github.io/sad-realtime-osc/, whose root `index.html` redirects to `web/`). The site is staged from `index.html`, `web/`, `shared/` and `tests/parity_common.py` + `tests/parity_cases.json` only. If the web app starts loading a file from anywhere else, add it to the "Stage site" step.
 
 ## Two apps, one math source
 
