@@ -969,9 +969,15 @@ def spacing_clearance_m(spacing_m: float, box_dimension_m: float) -> float:
 
 
 def sub_positions(n: int, spacing_m: float) -> list[float]:
-    """Distance of each of n inline elements from element 1, in meters --
-    the S.A.D. output sheet's "y" column for a straight array."""
-    return [i * spacing_m for i in range(n)]
+    """Depth of each of n End-Fire elements, in meters: element 1 (the
+    front, most delayed) at 0 and each further element set back by
+    spacing_m, so 0, -s, -2s, ... -- the same sign convention as every
+    other depth here (physical_arc_layout, the Arc Hybrids, Manual's
+    delays_from_depth): larger = closer to the audience. S.A.D.'s output
+    sheet lists the same distances as positive values counted from element
+    1; up to 0.10.0 this app did too, which made End-Fire's depth run the
+    opposite way to every other topology's."""
+    return [-i * spacing_m + 0.0 for i in range(n)]
 
 
 def sub_positions_centered(n: int, spacing_m: float) -> list[float]:
@@ -986,11 +992,13 @@ def sub_positions_centered(n: int, spacing_m: float) -> list[float]:
 
 
 def sub_positions_gradient(pairs: int, spacing_m: float) -> list[float]:
-    """Front/rear depth offset per pair: front=0, rear=spacing_m -- same
-    number for every pair, since pairs sit side by side at the same depth."""
+    """Front/rear depth per pair: front=0, rear=-spacing_m (set back, same
+    sign convention as sub_positions and sub_positions_arc_hybrid_depth) --
+    same numbers for every pair, since pairs sit side by side at the same
+    depth."""
     out = []
     for _ in range(pairs):
-        out.extend([0.0, spacing_m])
+        out.extend([0.0, -spacing_m + 0.0])
     return out
 
 

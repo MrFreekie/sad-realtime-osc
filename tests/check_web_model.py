@@ -102,6 +102,8 @@ def compare_views(name, app, state):
         check(name, f"sub {i+1} gain+group", text(app.total_gain_labels[i]), t["gain_total"])
         check(name, f"sub {i+1} gain (math)", f"{s.gain_db + 0.0:.2f}", t["gain"])
         check(name, f"sub {i+1} delay ms (exact)", s.delay_ms, r["delay_ms"])
+    # Layout plot geometry (shared/layout_plot.py fed by each app's own table data)
+    check(name, "layout plot", json.loads(json.dumps(app.layout_geometry)), json.loads(json.dumps(v["plot"])))
 
 
 def comparable(project):

@@ -37,6 +37,7 @@ const APP_FILES = [
   "../shared/array_math.py",
   "../shared/jsonable.py",
   "../shared/version.py",
+  "../shared/layout_plot.py",
   "../shared/sub_profiles.py",
   "../shared/sub_profiles.csv",
   "../shared/prealign_profiles.py",

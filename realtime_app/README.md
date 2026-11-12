@@ -396,14 +396,18 @@ feature works changed, just where the explanation lives.
 The per-sub table also shows **Y (m)**, matching S.A.D.'s output sheet
 column of the same name (plus **X (m)** and **Rotation (°)**, which are
 0 for every topology except Physical Horizontal Array and Manual — see
-above/below). For End-Fire, Y is each sub's distance from Sub 1 along
-the array (`(i-1) × spacing`). For **Arc / Broadside Steering** it's
+above/below). For End-Fire, the depth column is each sub's set-back
+from Sub 1, the front and most delayed sub (`-(i-1) × spacing`: 0,
+-spacing, -2 × spacing …). Every depth in the table uses this sign, where
+larger means closer to the audience, so End-Fire positions typed into
+Manual give the same delays. S.A.D.'s sheet lists the same distances as
+positive numbers; up to 0.10.0 this app did too. For **Arc / Broadside Steering** it's
 **symmetric about the array's centre**, sub 1 at the most positive end
 (`sub_positions_centered` in `array_math.py`) — matches S.A.D.'s own
 tutorial exactly (n=10, spacing=0.94 m → +4.23, +3.29, +2.35, +1.41,
 +0.47, -0.47, -1.41, -2.35, -3.29, -4.23), same reference point the
 corrected delay pattern above uses. For Gradient pairs it's the
-front/rear depth offset within a pair (0 m / spacing), repeated per pair
+front/rear depth within a pair (0 m / -spacing), repeated per pair
 since pairs sit side by side at the same depth. For **Manual**, X and Y
 are directly editable — see the Manual topology entry above.
 

@@ -5,6 +5,33 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Added (both apps): a **Layout** plot under the per-sub table. It's a plan view
+of the table's X and Y in metres, with X left to right and Y bottom to top.
+- Each sub is drawn as the Setup tab's box size, turned by its Rotation, with
+  an arrow for the way it faces.
+- Subs with reversed polarity are drawn in orange.
+- Subs that share a position share one label.
+- It shows positions only, not a coverage prediction.
+
+The geometry comes from the new `shared/layout_plot.py`, so the desktop canvas
+and the web SVG draw the same thing. `check_web_model.py` compares it in every
+scenario.
+
+Changed (both apps): End-Fire and Gradient/Cardioid Pairs depth now uses the
+same sign as every other topology, where larger means closer to the audience.
+- **End-Fire:** the depth column reads 0, −spacing, −2 × spacing … from Sub 1
+  (the front). Before, it read 0, +spacing, +2 × spacing.
+- **Gradient pairs:** the rear sub reads −spacing instead of +spacing.
+- **Why it matters:** End-Fire positions typed into Manual now give the same
+  delays as End-Fire. Before, they came out reversed. The plot also faces the
+  audience the same way for every topology.
+- **What changed:** only the X/Y columns, Copy and Export CSV.
+- **What didn't change:** delays, gains, polarities, OSC output and `.sadrt`
+  files are the same as before, and no parity case moved.
+  (`sub_positions` and `sub_positions_gradient` in `array_math.py` aren't in
+  the snapshot.)
+- **Compared with S.A.D.:** its sheet lists these distances as positive
+  numbers.
 
 ## [0.10.0] - 2026-11-12
 The **web app** is new in this release: https://mrfreekie.github.io/sad-realtime-osc/

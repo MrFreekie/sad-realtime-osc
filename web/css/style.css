@@ -121,7 +121,7 @@ main[inert] { opacity: 0.55; }
    of pushing the whole page sideways. */
 .design-layout { display: grid; grid-template-columns: minmax(440px, 560px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .col-controls { display: grid; gap: 10px; }
-.col-table { position: sticky; top: 12px; min-width: 0; }
+.col-table { position: sticky; top: 12px; min-width: 0; display: grid; gap: 10px; }
 .stack { display: grid; gap: 10px; max-width: 760px; }
 @media (max-width: 1000px) {
   .design-layout { grid-template-columns: 1fr; }
@@ -207,7 +207,8 @@ label.check { display: inline-flex; align-items: center; gap: 6px; white-space: 
 .table-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .table-head h2 { margin: 0; }
 .table-head .spacer { flex: 1; }
-.table-scroll { max-height: calc(100vh - 170px); overflow: auto; }
+/* Leaves room for the layout plot below it on a laptop screen. */
+.table-scroll { max-height: max(200px, calc(100vh - 540px)); overflow: auto; }
 table.results { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 table.results th, table.results td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); }
 table.results thead th { position: sticky; top: 0; background: var(--surface); color: var(--text-muted); font-weight: 550; font-size: 12px; }
@@ -215,6 +216,23 @@ table.results th:first-child, table.results td:first-child { text-align: left; }
 table.results td { font-family: var(--mono); }
 table.results td input[type="number"] { width: 84px; text-align: right; padding: 2px 6px; }
 .pol-rev { color: var(--warn); font-weight: 600; }
+
+/* Layout plot (drawn by app.js from view.plot) */
+.layout-plot { display: block; width: 100%; height: 300px; font-family: var(--mono); }
+.layout-plot .grid { stroke: var(--border); stroke-width: 1; }
+.layout-plot .axis { stroke: var(--text-muted); stroke-width: 1; }
+.layout-plot .tick { fill: var(--text-muted); font-size: 10px; }
+.layout-plot .axis-title { fill: var(--text-muted); font-size: 11px; font-family: system-ui, sans-serif; }
+.layout-plot .box { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: var(--accent); stroke-width: 1.25; }
+.layout-plot .box.rev { fill: color-mix(in srgb, var(--warn) 22%, transparent); stroke: var(--warn); }
+.layout-plot .dot { fill: var(--accent); }
+.layout-plot .dot.rev { fill: var(--warn); }
+.layout-plot .aim { stroke: var(--text-muted); stroke-width: 1.25; }
+.layout-plot .aim-head { fill: var(--text-muted); }
+.layout-plot .label { fill: var(--text); font-size: 10.5px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.legend { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+.swatch { width: 12px; height: 9px; border: 1.25px solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.swatch.rev { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 22%, transparent); }
 
 dialog {
   border: 1px solid var(--border);

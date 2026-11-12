@@ -211,7 +211,8 @@
         </section>
       </div>
 
-      <section class="panel col-table" aria-labelledby="h-results">
+      <div class="col-table">
+      <section class="panel" aria-labelledby="h-results">
         <div class="table-head">
           <h2 id="h-results">Per-sub output <button class="help" data-help="results"></button></h2>
           <span class="spacer"></span>
@@ -231,6 +232,17 @@
           </table>
         </div>
       </section>
+
+      <section class="panel" aria-labelledby="h-layout">
+        <div class="table-head">
+          <h2 id="h-layout">Layout <button class="help" data-help="layout"></button></h2>
+          <span class="spacer"></span>
+          <span class="legend"><span class="swatch"></span>Normal</span>
+          <span class="legend"><span class="swatch rev"></span>Reversed</span>
+        </div>
+        <svg id="layout-plot" class="layout-plot" role="img" aria-label="Plan view of the sub positions"></svg>
+      </section>
+      </div>
     </section>
 
     <!-- ============================================================= SETUP -->

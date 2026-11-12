@@ -167,6 +167,7 @@ Before shipping a topology change, create a simple test case in S.A.D., note the
 - `shared/`: used by both apps
   - Core math: `array_math.py` (no UI/OSC imports, stdlib only)
   - Profiles: `sub_profiles.py` + `sub_profiles.csv`, `prealign_profiles.py` + `prealign_delays.csv`
+  - Layout plot geometry: `layout_plot.py` (stdlib only). The desktop draws it on a Tk Canvas (`_draw_layout_plot`) and the web as SVG (`renderLayout` in `app.js`). Keep the two drawers in step.
 - `realtime_app/`: desktop app
   - Entry point: `sad_realtime_osc.py` (adds `../shared` to `sys.path`, imports `__version__` from `shared/version.py`)
   - Project save/load: `project_io.py` (reads/writes Tkinter variables)

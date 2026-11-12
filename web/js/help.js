@@ -245,4 +245,10 @@ export const HELP = {
     "Copy puts the table on the clipboard as tab-separated text (pastes straight into a spreadsheet). Export CSV saves " +
     "it as a file with full precision, delays in both ms and samples, and each sub's effective polarity including " +
     "Group polarity. This is what the desktop app would send over OSC: delay, gain and polarity per sub.",
+  layout:
+    "Plan view of the table's X and Y (metres): X left to right, Y bottom to top, so the X/Y convention on the Setup " +
+    "tab decides which way the array faces. Depth is 0 at the front and negative behind it, for every topology. Each box is the Setup tab's sub box size, centred on the sub's position " +
+    "and turned by its Rotation; the arrow points the way the sub faces. Orange boxes have reversed polarity. Subs " +
+    "that share a position share one label (Gradient pairs' side-by-side spacing isn't part of the table). This is " +
+    "positions only, not a coverage or SPL prediction.",
 };

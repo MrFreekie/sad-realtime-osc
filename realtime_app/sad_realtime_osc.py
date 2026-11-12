@@ -28,6 +28,7 @@ SUPPORT_URL = "https://buymeacoffee.com/fohengineer"
 
 import copy
 import ctypes
+import math
 import os
 import sys
 import webbrowser
@@ -62,6 +63,7 @@ from array_math import (
     LEVEL_TAPER_WINDOWS, PARAMETRIC_TAPER_WINDOWS, level_taper_db, arc_steered_aim_index,
     taper_onaxis_loss_db, taper_power_loss_db, floor_bounce,
 )
+from layout_plot import layout_plot, nice_step
 from sub_profiles import load_profiles
 from prealign_profiles import (
     load_entries as load_prealign_entries, CONFIG_LABELS, POLARITY_LABELS, PrealignDataError,
@@ -2299,6 +2301,96 @@ class App(tk.Tk):
         self.total_delay_header_lbl = header_labels[5]
 
         self.table_frame = frm
+        self._build_layout_plot()
+
+    # ------------------------------------------------------------ layout plot --
+    LAYOUT_HELP = (
+        "Plan view of the table's X and Y (metres): X left to right, Y bottom to top, so the X/Y convention on the "
+        "Setup tab decides which way the array faces. Depth is 0 at the front and negative behind it, for every "
+        "topology. Each box is the Setup tab's sub box size, centred on the sub's "
+        "position and turned by its Rotation; the arrow points the way the sub faces. Orange boxes have reversed "
+        "polarity. Subs that share a position share one label (Gradient pairs' side-by-side spacing isn't part of the "
+        "table). This is positions only, not a coverage or SPL prediction.")
+
+    def _build_layout_plot(self):
+        """Plan view under the per-sub table. Geometry comes from
+        shared/layout_plot.py, the same as the web app's plot."""
+        outer = ttk.LabelFrame(self.left_col, text="Layout")
+        outer.pack(fill="x", padx=PANEL_PAD_X, pady=PANEL_PAD_Y)
+        head = ttk.Frame(outer)
+        head.pack(fill="x")
+        self._help_icon(head, 0, 0, self.LAYOUT_HELP)
+        ttk.Label(head, text="■ Normal", foreground="#2563eb").grid(row=0, column=1, padx=FIELD_PAD_X)
+        ttk.Label(head, text="■ Reversed", foreground="#b45309").grid(row=0, column=2, padx=FIELD_PAD_X)
+        self.layout_canvas = tk.Canvas(outer, height=280, background="white", highlightthickness=0)
+        self.layout_canvas.pack(fill="x", expand=True, padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
+        self.layout_canvas.bind("<Configure>", lambda e: self._draw_layout_plot())
+        self.layout_geometry = None
+
+    def _update_layout_plot(self, subs, depth, lateral, rotation, reversed_flags):
+        try:
+            box_w, box_d = self.box_width.get(), self.box_depth.get()
+        except tk.TclError:
+            box_w = box_d = 0.0
+        self.layout_geometry = layout_plot(
+            [s.index for s in subs], depth, lateral, rotation, reversed_flags, box_w, box_d, self._dnb_mode())
+        self._draw_layout_plot()
+
+    def _draw_layout_plot(self):
+        """Same drawing as web/js/app.js renderLayout: equal scale on both
+        axes, X left to right, Y bottom to top."""
+        cv = self.layout_canvas
+        plot = self.layout_geometry
+        cv.delete("all")
+        W, H = cv.winfo_width(), cv.winfo_height()
+        if not plot or W < 50 or H < 50:
+            return
+        ml, mr, mt, mb = 44, 12, 12, 30
+        pw, ph = W - ml - mr, H - mt - mb
+        b = plot["bounds"]
+        scale = min(pw / (b["xmax"] - b["xmin"]), ph / (b["ymax"] - b["ymin"]))
+        cx, cy = (b["xmin"] + b["xmax"]) / 2, (b["ymin"] + b["ymax"]) / 2
+        x0, x1 = cx - pw / scale / 2, cx + pw / scale / 2
+        y0, y1 = cy - ph / scale / 2, cy + ph / scale / 2
+        X = lambda x: ml + (x - x0) * scale  # noqa: E731
+        Y = lambda y: mt + (y1 - y) * scale  # noqa: E731
+        grid, muted, text = "#d9dde3", "#5b6470", "#1b1f24"
+        tick_font, label_font = ("Consolas", 8), ("Consolas", 8)
+
+        step = nice_step(max(x1 - x0, y1 - y0))
+        fmt = lambda v: f"{round(v, 3) + 0.0:g}"  # noqa: E731
+        v = math.ceil(x0 / step) * step
+        while v <= x1 + 1e-9:
+            cv.create_line(X(v), mt, X(v), mt + ph, fill=grid)
+            cv.create_text(X(v), mt + ph + 9, text=fmt(v), fill=muted, font=tick_font)
+            v += step
+        v = math.ceil(y0 / step) * step
+        while v <= y1 + 1e-9:
+            cv.create_line(ml, Y(v), ml + pw, Y(v), fill=grid)
+            cv.create_text(ml - 5, Y(v), text=fmt(v), fill=muted, font=tick_font, anchor="e")
+            v += step
+        cv.create_rectangle(ml, mt, ml + pw, mt + ph, outline=muted)
+        cv.create_text(ml + pw, H - 4, text="X (m) →", fill=muted, anchor="se")
+        cv.create_text(4, mt, text="↑ Y (m)", fill=muted, anchor="nw")
+
+        for s in plot["subs"]:
+            colour, fill = ("#b45309", "#f3e3d0") if s["reversed"] else ("#2563eb", "#d6e2fb")
+            if s["outline"]:
+                cv.create_polygon([c for x, y in s["outline"] for c in (X(x), Y(y))], outline=colour, fill=fill)
+            else:
+                px, py = X(s["centre"][0]), Y(s["centre"][1])
+                cv.create_oval(px - 3.5, py - 3.5, px + 3.5, py + 3.5, fill=colour, outline="")
+            (ax, ay), (bx, by) = s["aim"]
+            cv.create_line(X(ax), Y(ay), X(bx), Y(by), fill=muted, arrow="last", arrowshape=(6, 7, 3))
+        for lab in plot["labels"]:
+            cv.create_text(X(lab["x"]), Y(lab["y"]), text=lab["text"], fill=text, font=label_font)
+
+        fx, fy = plot["forward"]
+        arrow = "→" if fx > 0 else "←" if fx < 0 else "↑" if fy > 0 else "↓"
+        ax = ml + pw - 6 if fx > 0 else ml + 6 if fx < 0 else ml + pw / 2
+        ay = mt + 8 if fy > 0 else mt + ph - 8 if fy < 0 else mt + ph / 2
+        anchor = "e" if fx > 0 else "w" if fx < 0 else "center"
+        cv.create_text(ax, ay, text=f"audience {arrow}", fill=muted, anchor=anchor)
 
     def _rebuild_rows(self, n, editable_all=False):
         for w in self.row_widgets:
@@ -2816,9 +2908,10 @@ class App(tk.Tk):
         lateral_labels = self.y_labels if self._dnb_mode() else self.x_labels
         # End-Fire and Gradient/Cardioid Pairs are front-to-back stacks --
         # every element shares one lateral position and spreads only in
-        # depth (README: End-Fire's Y is "distance from Sub 1 along the
-        # array", Gradient's is "front/rear depth offset within a pair" --
-        # both explicitly depth, matching Sub box dimensions' own "boxes
+        # depth (End-Fire: 0, -spacing, -2*spacing... set back from Sub 1;
+        # Gradient: 0 / -spacing within a pair -- both explicitly depth,
+        # with the same "larger = toward the audience" sign as every other
+        # depth here, matching Sub box dimensions' own "boxes
         # stack front to back, so depth is checked" for these two) -- the
         # opposite of every other computed topology here (Arc, Physical,
         # Progressive, the Arc Hybrids, Focus/Avoid Point), which are
@@ -2827,6 +2920,9 @@ class App(tk.Tk):
         # actually spreads along, so route it to the matching column
         # instead of assuming it's always lateral.
         is_depth_stacked = self.topology.get() in (TOPO_END_FIRE, TOPO_GRADIENT)
+        # Numeric copies of what the X/Y/Rotation columns show, for the layout plot.
+        rows = len(subs)
+        plot_depth, plot_lateral, plot_rotation = [0.0] * rows, [0.0] * rows, [0.0] * rows
         if not is_manual:
             positions = self._compute_positions()
             if is_depth_stacked:
@@ -2835,17 +2931,30 @@ class App(tk.Tk):
                         depth_labels[i].config(text=_fmt(pos, 2))
                     if i < len(lateral_labels):
                         lateral_labels[i].config(text="0.00")
+                    if i < rows:
+                        plot_depth[i] = pos
             else:
                 for i, pos in enumerate(positions):
                     if i < len(lateral_labels):
                         lateral_labels[i].config(text=_fmt(pos, 2))
+                    if i < rows:
+                        plot_lateral[i] = pos
 
         layout = self._compute_physical_layout()
-        for i, (depth, _lateral, rotation) in enumerate(layout):
+        for i, (depth, lateral, rotation) in enumerate(layout):
             if not is_manual and not is_depth_stacked and i < len(depth_labels):
                 depth_labels[i].config(text=_fmt(depth, 2))
             if i < len(self.rotation_labels):
                 self.rotation_labels[i].config(text=_fmt(rotation, 1))
+            if i < rows:
+                if is_manual:
+                    plot_depth[i], plot_lateral[i] = depth, lateral
+                elif not is_depth_stacked:
+                    plot_depth[i] = depth
+                plot_rotation[i] = rotation
+        group_inverted = self._group_inverted()
+        self._update_layout_plot(subs, plot_depth, plot_lateral, plot_rotation,
+                                 [effective_polarity(s.polarity_reversed, group_inverted) for s in subs])
 
         try:
             group_delay = self.group_delay.get()
@@ -2889,7 +2998,6 @@ class App(tk.Tk):
 
         if is_manual:
             return  # Manual's Polarity is a live Checkbutton, not a status label -- no text push
-        group_inverted = self._group_inverted()
         for i, s in enumerate(subs):
             if i < len(self.delay_labels):
                 eff_pol = effective_polarity(s.polarity_reversed, group_inverted)

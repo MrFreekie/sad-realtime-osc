@@ -199,6 +199,7 @@ function render() {
 
   renderPrealign();
   renderTable();
+  renderLayout();
   $("version").textContent = `v${view.version}`;
 }
 
@@ -293,6 +294,85 @@ function renderTable() {
     return tr;
   });
   tbody.replaceChildren(...rows);
+}
+
+// ---------------------------------------------------------------- layout --
+// Draws view.plot (geometry from shared/layout_plot.py, in metres) as SVG.
+// Same scale on both axes, X left to right, Y bottom to top. The desktop
+// draws the same geometry on a Tk Canvas (_draw_layout_plot).
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// shared/layout_plot.py:nice_step
+function niceStep(span, target = 6) {
+  if (!(span > 0)) return 1;
+  const raw = span / target;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 5, 10]) if (raw <= m * mag) return m * mag;
+  return 10 * mag;
+}
+
+function svgEl(tag, attrs, text) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function renderLayout() {
+  const svg = $("layout-plot");
+  const plot = view && view.plot;
+  const W = svg.clientWidth, H = svg.clientHeight;
+  if (!plot || !W || !H) return; // hidden tab: drawn when it's shown (ResizeObserver)
+  const m = { l: 44, r: 12, t: 12, b: 30 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const b = plot.bounds;
+  // Equal scale: fit the larger span, centre the other one.
+  const scale = Math.min(pw / (b.xmax - b.xmin), ph / (b.ymax - b.ymin));
+  const cx = (b.xmin + b.xmax) / 2, cy = (b.ymin + b.ymax) / 2;
+  const x0 = cx - pw / scale / 2, x1 = cx + pw / scale / 2;
+  const y0 = cy - ph / scale / 2, y1 = cy + ph / scale / 2;
+  const X = (x) => m.l + (x - x0) * scale;
+  const Y = (y) => m.t + (y1 - y) * scale;
+  const pt = ([x, y]) => `${X(x).toFixed(1)},${Y(y).toFixed(1)}`;
+
+  const parts = [];
+  const step = niceStep(Math.max(x1 - x0, y1 - y0));
+  const fmt = (v) => String(Number(v.toFixed(3)));
+  for (let v = Math.ceil(x0 / step) * step; v <= x1 + 1e-9; v += step) {
+    parts.push(svgEl("line", { class: "grid", x1: X(v), x2: X(v), y1: m.t, y2: m.t + ph }));
+    parts.push(svgEl("text", { class: "tick", x: X(v), y: m.t + ph + 13, "text-anchor": "middle" }, fmt(v)));
+  }
+  for (let v = Math.ceil(y0 / step) * step; v <= y1 + 1e-9; v += step) {
+    parts.push(svgEl("line", { class: "grid", y1: Y(v), y2: Y(v), x1: m.l, x2: m.l + pw }));
+    parts.push(svgEl("text", { class: "tick", x: m.l - 5, y: Y(v) + 3.5, "text-anchor": "end" }, fmt(v)));
+  }
+  parts.push(svgEl("rect", { class: "axis", x: m.l, y: m.t, width: pw, height: ph, fill: "none" }));
+  parts.push(svgEl("text", { class: "axis-title", x: m.l + pw, y: H - 3, "text-anchor": "end" }, "X (m) →"));
+  parts.push(svgEl("text", { class: "axis-title", x: 4, y: m.t + 8, "text-anchor": "start" }, "↑ Y (m)"));
+
+  for (const s of plot.subs) {
+    const rev = s.reversed ? " rev" : "";
+    if (s.outline.length) parts.push(svgEl("polygon", { class: `box${rev}`, points: s.outline.map(pt).join(" ") }));
+    else parts.push(svgEl("circle", { class: `dot${rev}`, cx: X(s.centre[0]), cy: Y(s.centre[1]), r: 3.5 }));
+    const [[ax, ay], [bx, by]] = s.aim;
+    const px0 = X(ax), py0 = Y(ay), px1 = X(bx), py1 = Y(by);
+    parts.push(svgEl("line", { class: "aim", x1: px0, y1: py0, x2: px1, y2: py1 }));
+    const ang = Math.atan2(py1 - py0, px1 - px0), hl = 6;
+    const head = [[px1, py1], [px1 - hl * Math.cos(ang - 0.45), py1 - hl * Math.sin(ang - 0.45)],
+      [px1 - hl * Math.cos(ang + 0.45), py1 - hl * Math.sin(ang + 0.45)]];
+    parts.push(svgEl("polygon", { class: "aim-head", points: head.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ") }));
+  }
+  for (const l of plot.labels) {
+    parts.push(svgEl("text", { class: "label", x: X(l.x), y: Y(l.y) + 3.5, "text-anchor": "middle" }, l.text));
+  }
+  // Which way the audience is (rotation 0)
+  const [fx, fy] = plot.forward;
+  const arrow = fx > 0 ? "→" : fx < 0 ? "←" : fy > 0 ? "↑" : "↓";
+  const ax = fx > 0 ? m.l + pw - 6 : fx < 0 ? m.l + 6 : m.l + pw / 2;
+  const ay = fy > 0 ? m.t + 14 : fy < 0 ? m.t + ph - 6 : m.t + ph / 2;
+  parts.push(svgEl("text", { class: "axis-title", x: ax, y: ay, "text-anchor": fx > 0 ? "end" : fx < 0 ? "start" : "middle" },
+    `audience ${arrow}`));
+  svg.replaceChildren(...parts);
 }
 
 // ---------------------------------------------------------------- events --
@@ -477,6 +557,7 @@ function setupTabs() {
 setupTabs();
 setupHelp();
 bindEvents();
+new ResizeObserver(() => renderLayout()).observe($("layout-plot"));
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Service worker not registered:", e));
 }

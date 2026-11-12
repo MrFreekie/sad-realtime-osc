@@ -21,6 +21,7 @@ import math
 from datetime import datetime, timezone
 
 import array_math as am
+import layout_plot
 import prealign_profiles
 import sub_profiles
 from version import __version__
@@ -977,7 +978,17 @@ def view(state):
         v["taper_cost_text"] = "taper cost: -"
         v["table"] = {"unit": "ms", "editable": topo == MANUAL, "rows": []}
         v["error"] = str(e)
+    v["plot"] = _plot(state, v["table"]["rows"])
     return v
+
+
+def _plot(state, rows):
+    """sad_realtime_osc._update_layout_plot: geometry for the layout plot."""
+    box = state["sub_box"]
+    return layout_plot.layout_plot(
+        [r["index"] for r in rows], [r["depth_m"] for r in rows], [r["lateral_m"] for r in rows],
+        [r["rotation_deg"] for r in rows], [r["polarity_reversed"] for r in rows],
+        box["width_m"], box["depth_m"], state["units"]["xy_convention"] == XY_DNB)
 
 
 # --------------------------------------------------------------- .sadrt --
