@@ -149,6 +149,11 @@ Both files have Python wrappers that fall back to built-in defaults if the CSV i
 
 ## Testing & Verification
 
+Project agents (`.claude/agents/`, read-only, they report and don't edit):
+- `math-verifier`: checks `shared/array_math.py` against S.A.D. ground truth.
+- `gui-checker`: drives the desktop Tk app without a window.
+- `web-checker`: drives the web app in the browser pane and checks file lists, pins and `.sadrt` round trips against the desktop. Run it after web UI changes and before pushing to master, because every push publishes.
+
 `tests/check_parity.py` re-runs 115 snapshot cases against `shared/array_math.py` and fails if any output moved. It catches regressions and (later) browser/desktop drift, but the snapshot is not ground truth. Correctness against S.A.D. is checked by the math-verifier agent and manually:
 - **New topologies**: Check against S.A.D.'s own tutorial (see realtime_app/README.md for which topologies are verified, which aren't).
 - **Gain/OSC curves**: Tested against hardware (DirectOut Prodigy/ACE) — values read back match sent values to within ~0.1 dB quantization noise.
