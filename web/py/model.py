@@ -54,8 +54,8 @@ TOPOLOGY_LABELS = {
 }
 HYBRIDS = (EF_HYBRID, GRAD_HYBRID)
 ANGLE_TOPOLOGIES = (ARC, PHYSICAL, PROGRESSIVE) + HYBRIDS
-ELLIPSE_TOPOLOGIES = (PHYSICAL, ARC) + HYBRIDS
-STEER_TOPOLOGIES = (ARC,) + HYBRIDS
+ELLIPSE_TOPOLOGIES = (PHYSICAL, ARC, PROGRESSIVE) + HYBRIDS
+STEER_TOPOLOGIES = (ARC, PROGRESSIVE) + HYBRIDS
 GRADIENT_PATTERN_TOPOLOGIES = (GRADIENT, GRAD_HYBRID)
 TAPER_TOPOLOGIES = ANGLE_TOPOLOGIES  # _sync_level_taper's set: Arc, Physical, Progressive, hybrids
 
@@ -63,7 +63,7 @@ CUSTOM_PROFILE = "— custom —"
 GRADIENT_PATTERN_ALPHA = {"Figure-8": 0.0, "Hypercardioid": 0.25, "Supercardioid": 0.37, "Cardioid": 0.5}
 GRADIENT_PATTERNS = list(GRADIENT_PATTERN_ALPHA)
 
-WAVELENGTH_FRACTION = {END_FIRE: 0.25, GRADIENT: 0.25, ARC: 0.5, EF_HYBRID: 0.5, GRAD_HYBRID: 0.5,
+WAVELENGTH_FRACTION = {END_FIRE: 0.25, GRADIENT: 0.25, ARC: 0.5, PROGRESSIVE: 0.5, EF_HYBRID: 0.5, GRAD_HYBRID: 0.5,
                        FOCUS: 0.5, AVOID: 0.5}
 
 DSP_CLOCK_RATES = {"48 kHz (1 FS)": 48000, "96 kHz (2 FS)": 96000, "192 kHz (4 FS)": 192000}
@@ -290,6 +290,9 @@ def _taper(state):
     center = None
     if topo == ARC or topo in HYBRIDS:
         center = am.arc_steered_aim_index(n, arr["angle_deg"], arr["steer_deg"])
+    elif topo == PROGRESSIVE:
+        center = am.progressive_aim_index(n, arr["spacing_m"], arr["progression_ratio"], arr["angle_deg"],
+                                          arr["steer_deg"])
     taper = am.level_taper_db(n, lt["window"], lt["max_atten_db"], center, lt["sidelobe_db"])
     taper = [round(db, 2) + 0.0 for db in taper]
     trims = [0.0] * rows
@@ -319,8 +322,11 @@ def compute(state, trims):
     if topo == ARC:
         return am.arc_steering(n, arr["spacing_m"], arr["angle_deg"], c, trims, arr["steer_deg"],
                                _depth_scale(state))
-    if topo in (PHYSICAL, PROGRESSIVE):
+    if topo == PHYSICAL:
         return am.physical_horizontal_array(n, trims)
+    if topo == PROGRESSIVE:
+        return am.progressive_arc(n, arr["spacing_m"], arr["progression_ratio"], arr["angle_deg"], c, trims,
+                                  arr["steer_deg"], _depth_scale(state))
     if topo == EF_HYBRID:
         return am.end_fire_arc_hybrid(n, arr["spacing_m"], arr["row_spacing_m"], arr["angle_deg"], c, trims,
                                       arr["steer_deg"], _depth_scale(state))
@@ -350,7 +356,7 @@ def physical_layout(state):
         laterals = am.sub_positions_arc_hybrid_lateral(n, arr["spacing_m"])
         return [(d, y, 0.0) for d, y in zip(depths, laterals)]
     if topo == PROGRESSIVE:
-        return am.progressive_arc_layout(n, arr["radius_m"], arr["angle_deg"], arr["progression_ratio"])
+        return [(0.0, y, 0.0) for y in am.progressive_line_positions(n, arr["spacing_m"], arr["progression_ratio"])]
     if topo != PHYSICAL:
         return [(0.0, 0.0, 0.0)] * _rows_for(topo, n)
     if arr["shape"] == "ellipse":
@@ -362,8 +368,10 @@ def _positions(state):
     """sad_realtime_osc._compute_positions (non-Manual)."""
     arr = state["array"]
     topo, n, spacing = arr["topology"], arr["count"], arr["spacing_m"]
-    if topo in (PHYSICAL, PROGRESSIVE):
+    if topo == PHYSICAL:
         return [lateral for _, lateral, _ in physical_layout(state)]
+    if topo == PROGRESSIVE:
+        return am.progressive_line_positions(n, spacing, arr["progression_ratio"])
     if topo == GRADIENT:
         return am.sub_positions_gradient(n, spacing)
     if topo in (ARC, FOCUS, AVOID):
@@ -517,7 +525,7 @@ def apply_action(state, action):
             _set_prealign_note(state)
 
     elif kind in ("set_min_spacing", "set_spacing_gap"):  # _set_min_spacing / _set_spacing_with_gap
-        if arr["topology"] not in (PHYSICAL, PROGRESSIVE):
+        if arr["topology"] != PHYSICAL:
             box_dim, _ = _relevant_box_dimension(state)
             if box_dim is not None:
                 gap = state["sub_box"]["gap_m"] if kind == "set_spacing_gap" else 0.0
@@ -597,7 +605,7 @@ def _collision_text(state):
     topo = arr["topology"]
     if topo == PHYSICAL and arr["shape"] == "circle":
         spacing = am.physical_arc_chord_spacing(arr["count"], arr["radius_m"], arr["angle_deg"])
-    elif topo in (PHYSICAL, PROGRESSIVE):
+    elif topo == PHYSICAL:
         spacing = am.min_adjacent_chord(physical_layout(state))
     else:
         spacing = arr["spacing_m"]
@@ -611,10 +619,17 @@ def _grating_lobe_text(state):
     d_max = am.grating_lobe_max_spacing_m(state["bandwidth"]["freq_high_hz"], speed(state), steer)
     if d_max is None:
         return "-"
-    spacing = state["array"]["spacing_m"]
+    arr = state["array"]
+    spacing = arr["spacing_m"]
+    what = "spacing"
+    if arr["topology"] == PROGRESSIVE:
+        # the widest gap (at the edges) is the one that risks grating lobes
+        pos = am.progressive_line_positions(arr["count"], spacing, arr["progression_ratio"])
+        spacing = max((a - b for a, b in zip(pos, pos[1:])), default=spacing)
+        what = "edge gap"
     margin = d_max - spacing
     if margin < 0:
-        return (f"⚠ grating-lobe risk: {spacing:.2f} m spacing > {d_max:.2f} m limit "
+        return (f"⚠ grating-lobe risk: {spacing:.2f} m {what} > {d_max:.2f} m limit "
                 f"at Steer {steer:.0f}° (by {-margin:.2f} m)")
     return f"OK — grating-lobe limit {d_max:.2f} m at Steer {steer:.0f}° ({margin:.2f} m headroom)"
 
@@ -723,7 +738,11 @@ def _info_view(state):
     topo, n, spacing = arr["topology"], arr["count"], arr["spacing_m"]
     c = speed(state)
     is_gradient = topo == GRADIENT
-    length = spacing if is_gradient else am.array_length(n, spacing)
+    if topo == PROGRESSIVE:
+        pos = am.progressive_line_positions(n, spacing, arr["progression_ratio"])
+        length = max(pos) - min(pos) if pos else 0.0
+    else:
+        length = spacing if is_gradient else am.array_length(n, spacing)
     out = {"length_text": f"{'pair depth' if is_gradient else 'array length'}: {length:.2f} m"}
     f_1l = am.freq_at_wavelength_fraction(length, c, 1.0)
     out["one_lambda_text"] = f"array 1λ: {f_1l:.0f} Hz" if f_1l else "array 1λ: -"
@@ -735,18 +754,22 @@ def _info_view(state):
     if topo in (ARC, EF_HYBRID, GRAD_HYBRID):
         result = am.arc_virtual_source(n, spacing, arr["angle_deg"], arr["steer_deg"], _depth_scale(state))
         unit = "column" if topo in HYBRIDS else "sub"
-    elif topo in (PHYSICAL, PROGRESSIVE):
+    elif topo == PROGRESSIVE:
+        result = am.progressive_virtual_source(n, spacing, arr["progression_ratio"], arr["angle_deg"],
+                                               arr["steer_deg"], _depth_scale(state))
+        unit = "sub"
+    elif topo == PHYSICAL:
         behind = am.physical_virtual_source_m(arr["radius_m"], _depth_scale(state))
         result = None if behind is None else (behind, 0.0, 0.0)
         unit = "sub"
     else:
         result = False
     if result is None:
-        text = ("virtual source: at infinity (Radius is 0)" if topo in (PHYSICAL, PROGRESSIVE)
+        text = ("virtual source: at infinity (Radius is 0)" if topo == PHYSICAL
                 else "virtual source: at infinity (flat line, Arc angle 0°)")
     elif result is not False:
         behind, offset, rms = result
-        aperture = max((n - 1) * spacing, 0.001)
+        aperture = max(length, 0.001)
         if behind > 500.0 or abs(offset) > 500.0:
             text = "virtual source: at infinity (delays are close to a plane wave)"
         elif behind <= 0.05 or rms > 0.25 * aperture:
@@ -834,13 +857,13 @@ def topology_note(state):
                      "the same symmetric arc-steering pattern as Arc / Broadside Steering, added underneath "
                      "each column's own front/rear offset. Spacing = column-to-column (lateral); Row spacing "
                      "= front-to-back depth within a column.",
-        PROGRESSIVE: "Same physical model as Physical Horizontal Array (every element equidistant "
-                     "from one center of curvature on a real arc of the given Radius, so delay stays fixed "
-                     "at 0 and Rotation is the true local aim angle) but with a non-uniform angular step "
-                     "between adjacent elements instead of a constant one -- Progression sets the center:edge "
-                     "(needs 4+ elements) step ratio (1.0 = uniform, identical to Physical Horizontal Array). "
-                     "Above 1.0 the center gap(s) widen and the edge gaps narrow, so total coverage angle "
-                     "(and FAR) is unchanged. This app's own extension, not part of S.A.D.",
+        PROGRESSIVE: "Sub 1..N in a straight line, all normal polarity, with gaps that widen "
+                     "toward both ends: Spacing is the centre gap and Progression is edge gap / centre gap "
+                     "(1.0 = even spacing; needs 4+ subs to vary). Delay comes from a virtual arc: a circle "
+                     "sized so the line's two ends span the Arc angle, each sub delayed by the circle's bow "
+                     "depth at its real position, so delay follows the uneven spacing. Steer and Shape = "
+                     "Ellipse work as in Arc / Broadside Steering. Physically flat: depth and Rotation are 0. "
+                     "This app's own extension, not part of S.A.D. -- no tutorial ground truth.",
         FOCUS: "\"Destruction Mode\": elements in a straight line (same physical layout as Arc / "
                "Broadside Steering), all delayed so their output arrives at one target point (Focus X/Y) "
                "at the same instant, for maximum constructive buildup there. Near-field acoustic "
@@ -930,8 +953,8 @@ def view(state):
     is_ellipse = is_ellipse_capable and arr["shape"] == "ellipse"
     uses_angle = topo in ANGLE_TOPOLOGIES
     uses_steer = topo in STEER_TOPOLOGIES
-    uses_radius = topo in (PHYSICAL, PROGRESSIVE)
-    no_spacing = topo in (PHYSICAL, MANUAL, PROGRESSIVE)
+    uses_radius = topo == PHYSICAL
+    no_spacing = topo in (PHYSICAL, MANUAL)
     uses_pattern = topo in GRADIENT_PATTERN_TOPOLOGIES
     c = speed(state)
 

@@ -33,7 +33,7 @@ python tests/generate_parity_cases.py
 # Web app: serve the REPO ROOT (not web/), then open http://127.0.0.1:8780/web/
 # (also configured as "web" in .claude/launch.json). Port 8765 is used by another local server.
 python -m http.server 8780 --bind 127.0.0.1
-# Browser parity check: http://127.0.0.1:8780/web/selftest.html must show 115/115
+# Browser parity check: http://127.0.0.1:8780/web/selftest.html must show 122/122
 
 # Current version (both apps) is in shared/version.py:__version__
 ```
@@ -69,7 +69,7 @@ This repo holds two front ends for the same calculator:
 
 - **`shared/array_math.py`** — Pure math functions, no UI or OSC dependencies, standard library only (must stay that way so it runs under Pyodide). ~1200 lines. Safe to unit-test or reuse. Core topologies implemented here:
   - S.A.D. topologies: `end_fire`, `gradient_cardioid`, `arc_steering`, `physical_horizontal_array`, `manual`
-  - This app's extensions: `end_fire_arc_hybrid`, `gradient_arc_hybrid`, `progressive_arc_layout`, `focus_point`, `avoid_point`
+  - This app's extensions: `end_fire_arc_hybrid`, `gradient_arc_hybrid`, `progressive_arc`, `focus_point`, `avoid_point`
   - Ellipse shape variant: `physical_ellipse_layout`
   - Supporting math: speed of sound (Cramer 1993), window tapers (Chebyshev, Taylor, classic windows), acoustic delays, floor bounce nulls, grating-lobe checks, etc.
 
@@ -154,7 +154,7 @@ Project agents (`.claude/agents/`, read-only, they report and don't edit):
 - `gui-checker`: drives the desktop Tk app without a window.
 - `web-checker`: drives the web app in the browser pane and checks file lists, pins and `.sadrt` round trips against the desktop. Run it after web UI changes and before pushing to master, because every push publishes.
 
-`tests/check_parity.py` re-runs 115 snapshot cases against `shared/array_math.py` and fails if any output moved. It catches regressions and (later) browser/desktop drift, but the snapshot is not ground truth. Correctness against S.A.D. is checked by the math-verifier agent and manually:
+`tests/check_parity.py` re-runs 122 snapshot cases against `shared/array_math.py` and fails if any output moved. It catches regressions and (later) browser/desktop drift, but the snapshot is not ground truth. Correctness against S.A.D. is checked by the math-verifier agent and manually:
 - **New topologies**: Check against S.A.D.'s own tutorial (see realtime_app/README.md for which topologies are verified, which aren't).
 - **Gain/OSC curves**: Tested against hardware (DirectOut Prodigy/ACE) — values read back match sent values to within ~0.1 dB quantization noise.
 - **Speed of sound**: Verified against Cramer (1993) paper; matches Cramer's table to within ±1 ppm.

@@ -69,6 +69,16 @@ def build_cases():
         add(case(f"gradient_arc_hybrid_c{cols}_{ang}_s{steer}", "gradient_arc_hybrid",
                  cols, 1.0, 1.0, ang, C, steer_deg=steer, alpha=0.37))
 
+    # Progressive Arc: straight line, gaps widening toward the edges, arc delays
+    for n, ratio in [(8, 1.0), (8, 2.0), (7, 3.0)]:
+        add(case(f"progressive_line_positions_n{n}_r{ratio}", "progressive_line_positions", n, 1.0, ratio))
+    for n, ratio, ang, steer, ds in [(10, 1.0, 71, 0, 1.0), (10, 2.0, 71, 0, 1.0), (8, 1.5, 90, 20, 1.0),
+                                     (9, 2.5, 120, -15, 0.6), (6, 1.5, 180, 0, 1.0)]:
+        add(case(f"progressive_arc_n{n}_r{ratio}_{ang}deg_s{steer}_d{ds}", "progressive_arc",
+                 n, 0.94, ratio, ang, C, steer_deg=steer, depth_scale=ds))
+    add(case("progressive_aim_index", "progressive_aim_index", 10, 0.94, 2.0, 71, 20))
+    add(case("progressive_virtual_source", "progressive_virtual_source", 8, 0.94, 2.0, 90, 10))
+
     add(case("physical_horizontal_array_6", "physical_horizontal_array", 6))
     add(case("manual_3", "manual", 3, [0, 1.5, 3.25], [0, -3, -6], [False, True, False]))
 
@@ -81,7 +91,6 @@ def build_cases():
     add(case("physical_arc_chord_spacing", "physical_arc_chord_spacing", 8, 7.29, 70))
     for ratio in (1.0, 0.6, 1.5):
         add(case(f"physical_ellipse_layout_r{ratio}", "physical_ellipse_layout", 8, 6.0, 180, ratio))
-        add(case(f"progressive_arc_layout_r{ratio}", "progressive_arc_layout", 8, 6.0, 90, ratio))
     add(case("physical_virtual_source", "physical_virtual_source_m", 5.0, 1.2))
 
     # --- Venue / FAR ------------------------------------------------------

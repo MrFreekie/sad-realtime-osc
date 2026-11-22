@@ -255,28 +255,31 @@ python sad_realtime_osc.py
   boxes sit close on both. **Columns** replaces "Subs"
   as the count label (each column is 2 physical subs); max 24 columns
   (48 subs).
-- **Progressive Arc** — same physical model as Physical Horizontal Array
-  (real arc of a given **Radius**, spanning the Arc angle; every element
-  still equidistant from the center of curvature, so Delay stays fixed
-  at 0 and **Rotation** is still the true local aim angle, unlike
-  Ellipse above) but with a non-uniform angular step between adjacent
-  elements instead of a constant one — a "J-array"-style progressive
-  spread. A **Progression** ratio (1.0–8.0, default 1.0) sets the
-  center:edge angular-step ratio -- the center-most gap(s) get exactly
-  that multiple of the edge gaps' step, for any odd or even element count
-  from 4 up (with 3 elements there are only two gaps, each both centre and
-  edge, so there's nothing to progress; earlier versions fell short of the
-  stated ratio for even gap counts). 1.0 reproduces Physical Horizontal
-  Array exactly (uniform steps, verified against its own tutorial data
-  the same way); above 1.0 the center gap(s) widen (tighter curvature
-  there) and the edge gaps narrow proportionally (flatter, longer throw
-  down the flanks), while total coverage angle — and FAR — stays
-  exactly what Arc (°) says (`progressive_arc_layout` in
-  `array_math.py`). This app's own extension, not part of S.A.D. — no
-  tutorial ground truth to verify the non-uniform case against, only
-  the ratio = 1.0 boundary case above. The Sub box dimensions collision
-  check uses the same minimum-adjacent-gap measurement as Ellipse,
-  since the chord isn't constant here either.
+- **Progressive Arc** — a straight line of subs whose gaps widen toward
+  both ends, delayed like an arc. **Spacing** is the gap at the centre
+  of the line; **Progression** (1.0–8.0, default 1.0) is the edge gap
+  divided by the centre gap. The centre-most gap(s) are exactly Spacing,
+  the two edge gaps exactly Progression × Spacing, and the gaps in
+  between grow evenly with distance from the centre
+  (`progressive_line_positions` in `array_math.py`). With 2 or 3 subs
+  every gap is both centre and edge, so the spacing stays even.
+  The delays come from a virtual arc: a circle sized so the line's two
+  ends span the **Arc** angle (radius = half the line's length ÷
+  sin(Arc/2)), with each sub delayed by the circle's bow depth at its
+  real position (`progressive_arc`). So the delay follows the uneven
+  spacing, not the sub's index. **Steer** and **Shape = Ellipse** work
+  as in Arc / Broadside Steering, and the Level taper's peak follows
+  Steer (`progressive_aim_index`). Physically the line is flat: depth
+  and Rotation are 0 for every sub. At Progression 1.0 it is an evenly
+  spaced line, close to Arc / Broadside Steering but not identical,
+  because Arc places each element at an equal angular step on its arc
+  while this uses the real position (10 × 0.94 m at 71°: 3.90 ms at the
+  edge here vs 3.66 ms on Arc). This app's own extension, not part of
+  S.A.D. — no tutorial ground truth. **Up to 0.10.0** Progressive Arc
+  was a physical curved arc (Radius, uneven angular steps, Rotation,
+  zero delay); old `.sadrt` files still load but now give the
+  straight-line layout, and their Progression value now means the
+  edge:centre gap ratio.
 - **Focus Point** ("Destruction Mode") — n elements in a straight line
   (same physical layout as Arc / Broadside Steering — evenly spaced,
   centered on **Spacing**), all delayed so their output arrives at one
@@ -478,11 +481,12 @@ dimension is checked depends on the active topology:
   elements (`physical_arc_chord_spacing` in `array_math.py`), since
   there's no Spacing field (spacing is a consequence of Radius/Arc/
   count).
-- **Physical Horizontal Array (Ellipse)** / **Progressive Arc** —
-  **width**, but against the *minimum* adjacent-element gap measured
-  directly from the actual placed layout (`min_adjacent_chord`), since
-  neither shape has a constant chord along the array the way the plain
-  circle does.
+- **Physical Horizontal Array (Ellipse)** — **width**, but against the
+  *minimum* adjacent-element gap measured directly from the actual
+  placed layout (`min_adjacent_chord`), since the ellipse has no
+  constant chord along the array the way the plain circle does.
+- **Progressive Arc** — **width** against Spacing, which is its
+  smallest gap (the centre one; the others only widen).
 - **End-Fire** / **Gradient / Cardioid Pairs** — boxes stack front to
   back, so **depth** is checked instead.
 - **End-Fire Arc Hybrid** / **Gradient Arc Hybrid** — both axes at once,
@@ -491,8 +495,9 @@ dimension is checked depends on the active topology:
   boxes front to back). Shown as two clearances side by side instead of
   one, since either axis can collide independently of the other.
 - **Manual** — no single spacing applies; shows "n/a", and the two
-  buttons below are no-ops (also no-ops for Physical Horizontal Array
-  and Progressive Arc, neither of which has a Spacing field to set).
+  buttons below are no-ops (also no-ops for Physical Horizontal Array,
+  which has no Spacing field to set; for Progressive Arc they set the
+  centre gap).
 
 Reports either `OK — X.XX m clearance` or `⚠ ... > ...`
 when the box is larger than the spacing (`spacing_clearance_m` in
@@ -502,7 +507,7 @@ physical check only, not a full 3D footprint/rigging model.
 Two buttons apply the relevant dimension straight to Spacing (for the
 two Arc Hybrids, this only ever sets Spacing — the column axis — never
 Row spacing, which stays a manual field; no-ops for Physical Horizontal
-Array/Progressive Arc, same reasoning as above):
+Array, same reasoning as above):
 
 - **Set min spacing** — Spacing = box dimension exactly (boxes
   touching, zero gap).
@@ -777,9 +782,10 @@ array's physical centre (`arc_steered_aim_index` in `array_math.py`) —
 steering the arc off-axis shifts the least-attenuated element(s) toward
 the steered side and the deepest attenuation toward the far edge, the
 same direction the delay pattern's own zero point moves. At Steer = 0°
-it's exactly the old symmetric window. **Physical Horizontal Array** and
-**Progressive Arc** have no Steer control, so the taper always stays
-centred for both regardless of Window.
+it's exactly the old symmetric window. **Progressive Arc** does the same
+with its own aim point, worked out on its uneven positions
+(`progressive_aim_index`). **Physical Horizontal Array** has no Steer
+control, so its taper always stays centred regardless of Window.
 
 Flat Top is a known exception to "monotonic taper" — it's an
 amplitude-accuracy window with a small ripple near the edges by design
@@ -861,12 +867,12 @@ venue shapes the circle can't, not just a cosmetic depth-scale slider.
 
 Default **60 Hz**. Enter the top of your sub's passband; the panel computes the spacing at
 which that frequency sits at ¼ wavelength (End-Fire/Gradient) or ½
-wavelength (Arc, the two Arc Hybrids' column Spacing, Focus Point, and
-Avoid Point) — S.A.D.'s own spacing rule of thumb, based on the
+wavelength (Arc, Progressive Arc's centre gap, the two Arc Hybrids'
+column Spacing, Focus Point, and Avoid Point) — S.A.D.'s own spacing rule of thumb, based on the
 highest frequency since that's where comb filtering from spacing bites
 first. "Use" applies it to the Spacing slider. Physical Horizontal Array
-and Progressive Arc have no Spacing field, so this shows "n/a" for both,
-same as before.
+has no Spacing field, so this shows "n/a" there. For Progressive Arc the
+grating-lobe check uses the widest (edge) gap instead of Spacing.
 
 For the two Arc Hybrids, a second row — **optimum row spacing (¼λ)** —
 computes the same rule for **Row spacing** instead, always at ¼
@@ -912,10 +918,10 @@ plots.
 **Virtual source** (this app's own addition; second row of the Info panel,
 shown for the topologies that have an arc): where the sound appears to come
 from — how far *behind* the array's centre line, and how far *off-axis*
-toward which end. For Physical Horizontal Array and Progressive Arc it's the
+toward which end. For Physical Horizontal Array it's the
 real arc's centre of curvature, exactly **Radius** behind the centre
 (Radius / Ellipse ratio for the Ellipse shape's vertex). For Arc / Broadside
-Steering and the two Arc Hybrids it's a least-squares fit of a point source to
+Steering, Progressive Arc and the two Arc Hybrids it's a least-squares fit of a point source to
 the delays actually applied (`arc_virtual_source` in `array_math.py`), so
 **Steer** and **Ellipse ratio** are included exactly as they enter the
 delays: Steer slides the source sideways (toward the higher-numbered end for

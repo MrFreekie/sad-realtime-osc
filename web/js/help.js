@@ -25,21 +25,21 @@ export const HELP = {
   ellipse_ratio:
     "Depth-scale ratio for Shape = Ellipse: 1.0 is a true circle (identical to Shape = Circle); below 1 flattens the " +
     "bow, above 1 exaggerates it. For Physical Horizontal Array this scales the real physical placement (Radius stays " +
-    "what it is); for Arc / Broadside Steering and the two Arc Hybrids, which are physically a straight line either " +
+    "what it is); for Arc / Broadside Steering, Progressive Arc and the two Arc Hybrids, which are physically a " +
+    "straight line either " +
     "way, it scales the virtual curvature used for delay instead -- same ratio, same effect on the pattern, just " +
     "electronic rather than physical. Rotation is not computed for Ellipse (always 0°, Physical Horizontal Array only " +
-    "-- the other three never had rotation to begin with) -- a true ellipse's aim direction is the local tangent, not " +
+    "-- the others never had rotation to begin with) -- a true ellipse's aim direction is the local tangent, not " +
     "the parametric angle, and this app treats subs as omnidirectional enough at these frequencies that it isn't worth " +
     "tracking for this shape. This app's own extension, not part of S.A.D. -- no tutorial ground truth to verify it " +
     "against.",
 
   progression:
-    "Center:edge angular-step ratio for Progressive Arc -- 1.0 is a uniform circular arc (identical to Physical " +
-    "Horizontal Array); above 1 makes the center gap(s) progressively wider (tighter curvature there) and the edge " +
-    "gaps progressively narrower (flatter, longer throw down the flanks), while total coverage angle (and FAR) stays " +
-    "exactly what Arc (°) says. Rotation is still the true local aim angle here, unlike Ellipse -- every element still " +
-    "sits on one real circle of the given Radius, just unevenly spaced along it. This app's own extension, not part of " +
-    "S.A.D. -- no tutorial ground truth to verify it against.",
+    "Progressive Arc's edge:centre gap ratio. The subs stand in a straight line; Spacing is the gap at the centre " +
+    "and the gaps widen evenly toward both ends until the two edge gaps are Progression x Spacing. 1.0 is an evenly " +
+    "spaced line. Delays then bend it into an arc of Arc (°) like Arc / Broadside Steering, worked out at each " +
+    "sub's real position on the line, so Steer and Shape = Ellipse work the same way. This app's own extension, " +
+    "not part of S.A.D. -- no tutorial ground truth to verify it against.",
 
   focus:
     "Focus Point (\"Destruction Mode\") delays every sub so its output arrives at one target point at the same " +
@@ -138,7 +138,8 @@ export const HELP = {
     "which the element spacing represents that many degrees of phase. S.A.D.'s info panel also shows -6 dB ONAX and " +
     "max angle, which need full polar/SPL summation and are left out here by design.\n\nvirtual source = where the " +
     "sound appears to come from: the point behind the array's centre that the delays (Arc / Arc Hybrids: including " +
-    "Steer and Ellipse ratio) or the real arc (Physical / Progressive: its centre of curvature) imitate. 'behind' is " +
+    "Steer and Ellipse ratio; Progressive: the virtual arc at the real positions) or the real arc (Physical: its " +
+    "centre of curvature) imitate. 'behind' is " +
     "distance back from the array's centre line; 'off-axis' is sideways toward the sub named. For the electronic " +
     "topologies it is a least-squares fit of a point source to the applied delays, not an exact result -- this app's " +
     "own readout with no S.A.D. ground truth; '(rough fit)' appears when the delays are a poor point-source match " +
@@ -189,7 +190,8 @@ export const HELP = {
     "both: width against Spacing (column-to-column) and depth against Row spacing (front/rear pair). \"Set min " +
     "spacing\" sets Spacing to that dimension exactly (boxes touching); \"Set spacing (+ gap)\" adds the gap value on " +
     "top, for cable/rigging clearance -- both only ever touch Spacing, not Row spacing, and are no-ops for Physical " +
-    "Horizontal Array/Progressive Arc, which have no Spacing field. Profiles load from sub_profiles.csv.",
+    "Horizontal Array, which has no Spacing field (for Progressive Arc they set the centre gap). Profiles load from " +
+    "sub_profiles.csv.",
 
   acoustic_centre:
     "Merlijn van Veen's low-frequency acoustic centre research: a sealed/vented sub's true radiating point may sit " +

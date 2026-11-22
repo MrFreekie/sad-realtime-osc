@@ -32,7 +32,7 @@ Project files (`.sadrt`) open in either app.
 Every push runs [`.github/workflows/pages.yml`](.github/workflows/pages.yml),
 which does three things:
 
-1. It runs 115 snapshot cases through the math in desktop Python and again
+1. It runs 122 snapshot cases through the math in desktop Python and again
    in Pyodide, the Python build the web app uses.
 2. It runs the desktop app without a screen beside the web app's logic and
    checks that every readout and saved file matches.

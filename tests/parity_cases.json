@@ -1596,6 +1596,481 @@
    ]
   },
   {
+   "id": "progressive_line_positions_n8_r1.0",
+   "fn": "progressive_line_positions",
+   "args": [
+    8,
+    1.0,
+    1.0
+   ],
+   "kwargs": {},
+   "expected": [
+    3.5,
+    2.5,
+    1.5,
+    0.5,
+    -0.5,
+    -1.5,
+    -2.5,
+    -3.5
+   ]
+  },
+  {
+   "id": "progressive_line_positions_n8_r2.0",
+   "fn": "progressive_line_positions",
+   "args": [
+    8,
+    1.0,
+    2.0
+   ],
+   "kwargs": {},
+   "expected": [
+    5.5,
+    3.5,
+    1.8333333333333335,
+    0.5,
+    -0.5,
+    -1.833333333333333,
+    -3.5,
+    -5.5
+   ]
+  },
+  {
+   "id": "progressive_line_positions_n7_r3.0",
+   "fn": "progressive_line_positions",
+   "args": [
+    7,
+    1.0,
+    3.0
+   ],
+   "kwargs": {},
+   "expected": [
+    6.0,
+    3.0,
+    1.0,
+    0.0,
+    -1.0,
+    -3.0,
+    -6.0
+   ]
+  },
+  {
+   "id": "progressive_arc_n10_r1.0_71deg_s0_d1.0",
+   "fn": "progressive_arc",
+   "args": [
+    10,
+    0.94,
+    1.0,
+    71,
+    343.0
+   ],
+   "kwargs": {
+    "steer_deg": 0,
+    "depth_scale": 1.0
+   },
+   "expected": [
+    {
+     "_type": "SubOutput",
+     "index": 1,
+     "delay_ms": 3.9033675266238435,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 2,
+     "delay_ms": 2.2452773889565547,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 3,
+     "delay_ms": 1.091265265123329,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 4,
+     "delay_ms": 0.35740346620881147,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 5,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 6,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 7,
+     "delay_ms": 0.35740346620881147,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 8,
+     "delay_ms": 1.091265265123329,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 9,
+     "delay_ms": 2.2452773889565547,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 10,
+     "delay_ms": 3.9033675266238435,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    }
+   ]
+  },
+  {
+   "id": "progressive_arc_n10_r2.0_71deg_s0_d1.0",
+   "fn": "progressive_arc",
+   "args": [
+    10,
+    0.94,
+    2.0,
+    71,
+    343.0
+   ],
+   "kwargs": {
+    "steer_deg": 0,
+    "depth_scale": 1.0
+   },
+   "expected": [
+    {
+     "_type": "SubOutput",
+     "index": 1,
+     "delay_ms": 6.1123116496173555,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 2,
+     "delay_ms": 2.9474463826413264,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 3,
+     "delay_ms": 1.1948976162513478,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 4,
+     "delay_ms": 0.32154871543792674,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 5,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 6,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 7,
+     "delay_ms": 0.32154871543792674,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 8,
+     "delay_ms": 1.1948976162513478,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 9,
+     "delay_ms": 2.9474463826413264,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 10,
+     "delay_ms": 6.1123116496173555,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    }
+   ]
+  },
+  {
+   "id": "progressive_arc_n8_r1.5_90deg_s20_d1.0",
+   "fn": "progressive_arc",
+   "args": [
+    8,
+    0.94,
+    1.5,
+    90,
+    343.0
+   ],
+   "kwargs": {
+    "steer_deg": 20,
+    "depth_scale": 1.0
+   },
+   "expected": [
+    {
+     "_type": "SubOutput",
+     "index": 1,
+     "delay_ms": 10.27961566449015,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 2,
+     "delay_ms": 5.824847975159389,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 3,
+     "delay_ms": 3.1243822616727748,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 4,
+     "delay_ms": 1.4760378717327458,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 5,
+     "delay_ms": 0.5387231932309138,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 6,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 7,
+     "delay_ms": 0.20095990414839407,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 8,
+     "delay_ms": 1.8437835579736557,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    }
+   ]
+  },
+  {
+   "id": "progressive_arc_n9_r2.5_120deg_s-15_d0.6",
+   "fn": "progressive_arc",
+   "args": [
+    9,
+    0.94,
+    2.5,
+    120,
+    343.0
+   ],
+   "kwargs": {
+    "steer_deg": -15,
+    "depth_scale": 0.6
+   },
+   "expected": [
+    {
+     "_type": "SubOutput",
+     "index": 1,
+     "delay_ms": 2.8018692073276146,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 2,
+     "delay_ms": 0.17993057174928748,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 3,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 4,
+     "delay_ms": 0.5143576531143699,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 5,
+     "delay_ms": 1.1215498312749745,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 6,
+     "delay_ms": 1.9329576670873698,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 7,
+     "delay_ms": 3.5465000349325,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 8,
+     "delay_ms": 6.563630634627786,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 9,
+     "delay_ms": 12.732069305138612,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    }
+   ]
+  },
+  {
+   "id": "progressive_arc_n6_r1.5_180deg_s0_d1.0",
+   "fn": "progressive_arc",
+   "args": [
+    6,
+    0.94,
+    1.5,
+    180,
+    343.0
+   ],
+   "kwargs": {
+    "steer_deg": 0,
+    "depth_scale": 1.0
+   },
+   "expected": [
+    {
+     "_type": "SubOutput",
+     "index": 1,
+     "delay_ms": 8.800669550980482,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 2,
+     "delay_ms": 1.2954333402682936,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 3,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 4,
+     "delay_ms": 0.0,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 5,
+     "delay_ms": 1.2954333402682936,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    },
+    {
+     "_type": "SubOutput",
+     "index": 6,
+     "delay_ms": 8.800669550980482,
+     "gain_db": 0.0,
+     "polarity_reversed": false
+    }
+   ]
+  },
+  {
+   "id": "progressive_aim_index",
+   "fn": "progressive_aim_index",
+   "args": [
+    10,
+    0.94,
+    2.0,
+    71,
+    20
+   ],
+   "kwargs": {},
+   "expected": 7.498761413445483
+  },
+  {
+   "id": "progressive_virtual_source",
+   "fn": "progressive_virtual_source",
+   "args": [
+    8,
+    0.94,
+    2.0,
+    90,
+    10
+   ],
+   "kwargs": {},
+   "expected": [
+    4.932705078124778,
+    1.1435595703124837,
+    0.09060673144144187
+   ]
+  },
+  {
    "id": "physical_horizontal_array_6",
    "fn": "physical_horizontal_array",
    "args": [
@@ -2170,59 +2645,6 @@
    ]
   },
   {
-   "id": "progressive_arc_layout_r1.0",
-   "fn": "progressive_arc_layout",
-   "args": [
-    8,
-    6.0,
-    90,
-    1.0
-   ],
-   "kwargs": {},
-   "expected": [
-    [
-     -1.7573593128807146,
-     4.242640687119286,
-     45.0
-    ],
-    [
-     -0.9196548046302953,
-     3.19219245909202,
-     32.142857142857146
-    ],
-    [
-     -0.33670001814979456,
-     1.9816743717310026,
-     19.285714285714285
-    ],
-    [
-     -0.037726740640544376,
-     0.6717868566198472,
-     6.428571428571429
-    ],
-    [
-     -0.037726740640544376,
-     -0.6717868566198472,
-     -6.428571428571429
-    ],
-    [
-     -0.33670001814979456,
-     -1.9816743717310026,
-     -19.285714285714285
-    ],
-    [
-     -0.9196548046302953,
-     -3.19219245909202,
-     -32.142857142857146
-    ],
-    [
-     -1.7573593128807146,
-     -4.242640687119286,
-     -45.0
-    ]
-   ]
-  },
-  {
    "id": "physical_ellipse_layout_r0.6",
    "fn": "physical_ellipse_layout",
    "args": [
@@ -2276,59 +2698,6 @@
    ]
   },
   {
-   "id": "progressive_arc_layout_r0.6",
-   "fn": "progressive_arc_layout",
-   "args": [
-    8,
-    6.0,
-    90,
-    0.6
-   ],
-   "kwargs": {},
-   "expected": [
-    [
-     -1.7573593128807146,
-     4.242640687119286,
-     45.0
-    ],
-    [
-     -0.9196548046302953,
-     3.19219245909202,
-     32.142857142857146
-    ],
-    [
-     -0.33670001814979456,
-     1.9816743717310026,
-     19.285714285714285
-    ],
-    [
-     -0.037726740640544376,
-     0.6717868566198472,
-     6.428571428571429
-    ],
-    [
-     -0.037726740640544376,
-     -0.6717868566198472,
-     -6.428571428571429
-    ],
-    [
-     -0.33670001814979456,
-     -1.9816743717310026,
-     -19.285714285714285
-    ],
-    [
-     -0.9196548046302953,
-     -3.19219245909202,
-     -32.142857142857146
-    ],
-    [
-     -1.7573593128807146,
-     -4.242640687119286,
-     -45.0
-    ]
-   ]
-  },
-  {
    "id": "physical_ellipse_layout_r1.5",
    "fn": "physical_ellipse_layout",
    "args": [
@@ -2378,59 +2747,6 @@
      -8.999999999999998,
      -6.0,
      0.0
-    ]
-   ]
-  },
-  {
-   "id": "progressive_arc_layout_r1.5",
-   "fn": "progressive_arc_layout",
-   "args": [
-    8,
-    6.0,
-    90,
-    1.5
-   ],
-   "kwargs": {},
-   "expected": [
-    [
-     -1.7573593128807152,
-     4.242640687119286,
-     45.00000000000001
-    ],
-    [
-     -1.0500151524101868,
-     3.3908184865355517,
-     34.41176470588236
-    ],
-    [
-     -0.43920737527823706,
-     2.2533498141300763,
-     22.05882352941177
-    ],
-    [
-     -0.057537414748768834,
-     0.8289381297112937,
-     7.941176470588239
-    ],
-    [
-     -0.057537414748768834,
-     -0.8289381297112928,
-     -7.941176470588232
-    ],
-    [
-     -0.43920737527823706,
-     -2.2533498141300754,
-     -22.05882352941176
-    ],
-    [
-     -1.0500151524101862,
-     -3.3908184865355513,
-     -34.411764705882355
-    ],
-    [
-     -1.7573593128807152,
-     -4.242640687119286,
-     -45.00000000000001
     ]
    ]
   },

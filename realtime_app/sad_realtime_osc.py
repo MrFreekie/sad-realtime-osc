@@ -52,7 +52,8 @@ from array_math import (
     physical_horizontal_array, physical_arc_layout, physical_arc_chord_spacing, delays_from_depth,
     end_fire_arc_hybrid, gradient_arc_hybrid,
     sub_positions_arc_hybrid_lateral, sub_positions_arc_hybrid_depth,
-    physical_ellipse_layout, progressive_arc_layout, min_adjacent_chord,
+    physical_ellipse_layout, progressive_arc, progressive_line_positions, progressive_aim_index,
+    progressive_virtual_source, min_adjacent_chord,
     ellipse_ratio_from_far, angle_from_far_ellipse, focus_point, avoid_point,
     gradient_null_angle_deg, alpha_from_null_angle_deg, arc_virtual_source, physical_virtual_source_m,
     freq_at_wavelength_fraction, spacing_at_wavelength_fraction, grating_lobe_max_spacing_m,
@@ -87,19 +88,25 @@ ARC_HYBRID_TOPOLOGIES = (TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID)
 ANGLE_TOPOLOGIES = (TOPO_ARC, TOPO_PHYSICAL, TOPO_PROGRESSIVE) + ARC_HYBRID_TOPOLOGIES
 # Topologies with a Shape (Circle/Ellipse) selector: Physical Horizontal Array
 # (real elliptical placement, physical_ellipse_layout) and Arc / Broadside
-# Steering plus both Arc Hybrids (electronic depth_scale on the same virtual
-# curvature, _arc_column_delays_s -- they're physically a straight line
+# Steering, Progressive Arc and both Arc Hybrids (electronic depth_scale on
+# the virtual curvature used for delay -- they're physically a straight line
 # either way, so there's no placement to bend, just the delay curve).
-# Progressive Arc is deliberately not included -- its own Progression ratio
-# is a different, not-yet-combined generalization of the same circle.
-ELLIPSE_TOPOLOGIES = (TOPO_PHYSICAL, TOPO_ARC) + ARC_HYBRID_TOPOLOGIES
-# Topologies with a Steer control -- Arc / Broadside Steering and the two Arc
-# Hybrids (Physical Horizontal Array, Progressive Arc, and Focus Point have no
-# electronic steering concept: their delay is either fixed at 0 or solved for
-# a focus point instead). Shared constant for the same reason ANGLE_TOPOLOGIES
-# and ELLIPSE_TOPOLOGIES are -- one definition instead of two that could drift
-# apart (see ANGLE_TOPOLOGIES' comment for the bug that taught that lesson).
-STEER_TOPOLOGIES = (TOPO_ARC,) + ARC_HYBRID_TOPOLOGIES
+ELLIPSE_TOPOLOGIES = (TOPO_PHYSICAL, TOPO_ARC, TOPO_PROGRESSIVE) + ARC_HYBRID_TOPOLOGIES
+# Topologies with a Steer control -- the delayed straight lines: Arc /
+# Broadside Steering, Progressive Arc and the two Arc Hybrids (Physical
+# Horizontal Array and Focus Point have no electronic steering concept: their
+# delay is either fixed at 0 or solved for a focus point instead). Shared
+# constant for the same reason ANGLE_TOPOLOGIES and ELLIPSE_TOPOLOGIES are --
+# one definition instead of two that could drift apart (see ANGLE_TOPOLOGIES'
+# comment for the bug that taught that lesson).
+STEER_TOPOLOGIES = (TOPO_ARC, TOPO_PROGRESSIVE) + ARC_HYBRID_TOPOLOGIES
+
+PROGRESSION_HELP = (
+    "Progressive Arc's edge:centre gap ratio. The subs stand in a straight line; Spacing is the gap at the centre "
+    "and the gaps widen evenly toward both ends until the two edge gaps are Progression x Spacing. 1.0 is an evenly "
+    "spaced line. Delays then bend it into an arc of Arc (°) like Arc / Broadside Steering, worked out at each "
+    "sub's real position on the line, so Steer and Shape = Ellipse work the same way. This app's own extension, "
+    "not part of S.A.D. -- no tutorial ground truth to verify it against.")
 # Topologies with a front/rear differential (Gradient) pair whose pattern is
 # tunable via alpha -- Gradient / Cardioid Pairs itself and Gradient Arc
 # Hybrid (End-Fire Arc Hybrid's pairs are same-polarity, not a differential
@@ -145,6 +152,7 @@ WAVELENGTH_FRACTION = {
     TOPO_END_FIRE: 0.25,
     TOPO_GRADIENT: 0.25,
     TOPO_ARC: 0.5,
+    TOPO_PROGRESSIVE: 0.5,
     TOPO_EF_ARC_HYBRID: 0.5,
     TOPO_GRAD_ARC_HYBRID: 0.5,
     TOPO_FOCUS: 0.5,
@@ -619,11 +627,12 @@ class App(tk.Tk):
             text="Depth-scale ratio for Shape = Ellipse: 1.0 is a true circle (identical to "
                  "Shape = Circle); below 1 flattens the bow, above 1 exaggerates it. For "
                  "Physical Horizontal Array this scales the real physical placement (Radius "
-                 "stays what it is); for Arc / Broadside Steering and the two Arc Hybrids, "
+                 "stays what it is); for Arc / Broadside Steering, Progressive Arc and the two "
+                 "Arc Hybrids, "
                  "which are physically a straight line either way, it scales the virtual "
                  "curvature used for delay instead -- same ratio, same effect on the pattern, "
                  "just electronic rather than physical. Rotation is not computed for Ellipse "
-                 "(always 0°, Physical Horizontal Array only -- the other three never had "
+                 "(always 0°, Physical Horizontal Array only -- the others never had "
                  "rotation to begin with) -- a true ellipse's aim direction is the local "
                  "tangent, not the parametric angle, and this app treats subs as "
                  "omnidirectional enough at these frequencies that it isn't worth tracking "
@@ -635,15 +644,7 @@ class App(tk.Tk):
             frm, "Progression", self.progression_ratio, 1.0, 8.0, row=6, increment=0.1, decimals=2)
         self.progression_help = self._help_icon(
             frm, row=6, col=3,
-            text="Center:edge angular-step ratio for Progressive Arc -- 1.0 is a uniform "
-                 "circular arc (identical to Physical Horizontal Array); above 1 makes the "
-                 "center gap(s) progressively wider (tighter curvature there) and the edge "
-                 "gaps progressively narrower (flatter, longer throw down the flanks), while "
-                 "total coverage angle (and FAR) stays exactly what Arc (°) says. Rotation is "
-                 "still the true local aim angle here, unlike Ellipse -- every element still "
-                 "sits on one real circle of the given Radius, just unevenly spaced along it. "
-                 "This app's own extension, not part of S.A.D. -- no tutorial ground truth to "
-                 "verify it against.")
+            text=PROGRESSION_HELP)
 
         self.focus_x_label = ttk.Label(frm, text="Focus X")
         self.focus_x_label.grid(row=7, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
@@ -1065,10 +1066,10 @@ class App(tk.Tk):
         """Keeps Gain trim live-following the Level taper window for Arc /
         Physical Horizontal Array / Progressive Arc / the two Arc
         Hybrids, the same way Delay is always live for those topologies
-        -- no separate "Apply" step. For Arc and the Arc Hybrids, the
-        taper's peak follows Steer's shifted aim point instead of
-        staying pinned to the array's physical centre (Physical and
-        Progressive have no Steer, so they always stay centred). For the
+        -- no separate "Apply" step. For Arc, Progressive Arc and the Arc
+        Hybrids, the taper's peak follows Steer's shifted aim point
+        instead of staying pinned to the array's physical centre
+        (Physical has no Steer, so it always stays centred). For the
         Arc Hybrids, the window is computed across columns (n = Columns,
         not total subs) and both the front and rear sub in a column get
         that column's trim."""
@@ -1087,6 +1088,12 @@ class App(tk.Tk):
         if topo == TOPO_ARC or is_hybrid:
             try:
                 center_index = arc_steered_aim_index(n, self.angle.get(), self.steer.get())
+            except tk.TclError:
+                center_index = None
+        elif topo == TOPO_PROGRESSIVE:
+            try:
+                center_index = progressive_aim_index(n, self.spacing.get(), self.progression_ratio.get(),
+                                                     self.angle.get(), self.steer.get())
             except tk.TclError:
                 center_index = None
         try:
@@ -1654,8 +1661,8 @@ class App(tk.Tk):
                               "against Row spacing (front/rear pair). \"Set min spacing\" sets Spacing to that "
                               "dimension exactly (boxes touching); \"Set spacing (+ gap)\" adds the gap value "
                               "on top, for cable/rigging clearance -- both only ever touch Spacing, not Row "
-                              "spacing, and are no-ops for Physical Horizontal Array/Progressive Arc, which "
-                              "have no Spacing field. Profiles load from sub_profiles.csv.")
+                              "spacing, and are no-ops for Physical Horizontal Array, which has no Spacing "
+                              "field (for Progressive Arc they set the centre gap). Profiles load from sub_profiles.csv.")
 
         ttk.Label(frm, text="Width").grid(row=1, column=0, sticky="w", padx=FIELD_PAD_X, pady=FIELD_PAD_Y)
         self.box_width = tk.DoubleVar(value=1.340)
@@ -1733,18 +1740,18 @@ class App(tk.Tk):
     def _effective_spacing_m(self):
         """Spacing the collision check compares against: the Spacing
         field for topologies that use it, or the smallest adjacent-element
-        gap for the topologies that place elements on a curve instead
-        (Physical Horizontal Array, Progressive Arc), which have no
-        Spacing input of their own. Physical Horizontal Array's plain
-        Circle shape uses the exact constant-chord formula (verified
-        against S.A.D.'s tutorial); Ellipse and Progressive Arc don't have
-        a constant chord (the gap varies along the array), so they measure
-        the actual placed layout directly and take its minimum -- the
-        worst-case gap is what a collision check needs."""
+        gap for Physical Horizontal Array, which places elements on a
+        curve and has no Spacing input of its own. Its plain Circle shape
+        uses the exact constant-chord formula (verified against S.A.D.'s
+        tutorial); Ellipse doesn't have a constant chord (the gap varies
+        along the array), so it measures the actual placed layout directly
+        and takes its minimum -- the worst-case gap is what a collision
+        check needs. Progressive Arc's smallest gap is its Spacing (the
+        centre gap; the others only widen), so it uses the field too."""
         topo = self.topology.get()
         if topo == TOPO_PHYSICAL and self.shape.get() == SHAPE_CIRCLE:
             return physical_arc_chord_spacing(self.count.get(), self.radius.get(), self.angle.get())
-        if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+        if topo == TOPO_PHYSICAL:
             return min_adjacent_chord(self._compute_physical_layout())
         return self.spacing.get()
 
@@ -1760,13 +1767,19 @@ class App(tk.Tk):
             steer = self.steer.get()
             d_max = grating_lobe_max_spacing_m(self.freq_high.get(), self._speed_of_sound(), steer)
             spacing = self.spacing.get()
+            what = "spacing"
+            if self.topology.get() == TOPO_PROGRESSIVE:
+                # the widest gap (at the edges) is the one that risks grating lobes
+                pos = progressive_line_positions(self.count.get(), spacing, self.progression_ratio.get())
+                spacing = max((a - b for a, b in zip(pos, pos[1:])), default=spacing)
+                what = "edge gap"
         except tk.TclError:
             return "-"
         if d_max is None:
             return "-"
         margin = d_max - spacing
         if margin < 0:
-            return (f"⚠ grating-lobe risk: {spacing:.2f} m spacing > {d_max:.2f} m limit "
+            return (f"⚠ grating-lobe risk: {spacing:.2f} m {what} > {d_max:.2f} m limit "
                     f"at Steer {steer:.0f}° (by {-margin:.2f} m)")
         return f"OK — grating-lobe limit {d_max:.2f} m at Steer {steer:.0f}° ({margin:.2f} m headroom)"
 
@@ -1802,7 +1815,7 @@ class App(tk.Tk):
         self.collision_label.config(text=self._clearance_text(spacing, box_dim, dim_name))
 
     def _set_min_spacing(self):
-        if self.topology.get() in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+        if self.topology.get() == TOPO_PHYSICAL:
             return  # no Spacing field to set -- spacing is a consequence of Radius/Arc/count here
         try:
             box_dim, _ = self._relevant_box_dimension()
@@ -1815,7 +1828,7 @@ class App(tk.Tk):
         self._on_change()
 
     def _set_spacing_with_gap(self):
-        if self.topology.get() in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+        if self.topology.get() == TOPO_PHYSICAL:
             return
         try:
             box_dim, _ = self._relevant_box_dimension()
@@ -1923,8 +1936,8 @@ class App(tk.Tk):
         Arc Hybrid selection (and its Row spacing) every time -- fixed
         so "Set arc" no longer knocks you out of a topology you were
         already on, Physical Horizontal Array and Progressive Arc
-        included (both also need their own Radius, but that's a
-        separate, already-set field -- no reason to abandon them for it).
+        included (Physical also needs its own Radius, but that's a
+        separate, already-set field -- no reason to abandon it for it).
 
         Only ever touches Angle -- for a Shape = Ellipse topology, it
         uses angle_from_far_ellipse instead of the plain circle's
@@ -2059,7 +2072,8 @@ class App(tk.Tk):
                               "angle, which need full polar/SPL summation and are left out here by design.\n\n"
                               "virtual source = where the sound appears to come from: the point behind the "
                               "array's centre that the delays (Arc / Arc Hybrids: including Steer and Ellipse "
-                              "ratio) or the real arc (Physical / Progressive: its centre of curvature) "
+                              "ratio; Progressive: the virtual arc at the real positions) or the real arc "
+                              "(Physical: its centre of curvature) "
                               "imitate. 'behind' is distance back from the array's centre line; 'off-axis' is "
                               "sideways toward the sub named. For the electronic topologies it is a "
                               "least-squares fit of a point source to the applied delays, not an exact "
@@ -2078,7 +2092,14 @@ class App(tk.Tk):
         except tk.TclError:
             return
         is_gradient = topo == TOPO_GRADIENT
-        length = spacing if is_gradient else array_length(n, spacing)
+        if topo == TOPO_PROGRESSIVE:
+            try:
+                pos = progressive_line_positions(n, spacing, self.progression_ratio.get())
+            except tk.TclError:
+                return
+            length = max(pos) - min(pos) if pos else 0.0
+        else:
+            length = spacing if is_gradient else array_length(n, spacing)
         length_label = "pair depth" if is_gradient else "array length"
         self.info_length_label.config(text=f"{length_label}: {length:.2f} m")
 
@@ -2091,27 +2112,31 @@ class App(tk.Tk):
         self.info_180_label.config(text=f"spk dist 180°: {f_180:.0f} Hz" if f_180 else "spk dist 180°: -")
         self.info_240_label.config(text=f"spk dist 240°: {f_240:.0f} Hz" if f_240 else "spk dist 240°: -")
         self.info_360_label.config(text=f"spk dist 360°: {f_360:.0f} Hz" if f_360 else "spk dist 360°: -")
-        self._update_virtual_source_label(topo, n, spacing)
+        self._update_virtual_source_label(topo, n, spacing, length)
 
-    def _update_virtual_source_label(self, topo, n, spacing):
+    def _update_virtual_source_label(self, topo, n, spacing, length=None):
         text = "virtual source: n/a (no arc in this topology)"
         try:
             if topo in (TOPO_ARC, TOPO_EF_ARC_HYBRID, TOPO_GRAD_ARC_HYBRID):
                 result = arc_virtual_source(n, spacing, self.angle.get(), self.steer.get(),
                                             self._ellipse_depth_scale())
                 unit = "column" if topo in ARC_HYBRID_TOPOLOGIES else "sub"
-            elif topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+            elif topo == TOPO_PROGRESSIVE:
+                result = progressive_virtual_source(n, spacing, self.progression_ratio.get(), self.angle.get(),
+                                                    self.steer.get(), self._ellipse_depth_scale())
+                unit = "sub"
+            elif topo == TOPO_PHYSICAL:
                 behind = physical_virtual_source_m(self.radius.get(), self._ellipse_depth_scale())
                 result = None if behind is None else (behind, 0.0, 0.0)
                 unit = "sub"
             else:
                 result = False
             if result is None:
-                text = ("virtual source: at infinity (Radius is 0)" if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE)
+                text = ("virtual source: at infinity (Radius is 0)" if topo == TOPO_PHYSICAL
                         else "virtual source: at infinity (flat line, Arc angle 0°)")
             elif result is not False:
                 behind, offset, rms = result
-                aperture = max((n - 1) * spacing, 0.001)
+                aperture = max(length if length is not None else (n - 1) * spacing, 0.001)
                 if behind > 500.0 or abs(offset) > 500.0:
                     text = "virtual source: at infinity (delays are close to a plane wave)"
                 elif behind <= 0.05 or rms > 0.25 * aperture:
@@ -2517,8 +2542,8 @@ class App(tk.Tk):
         is_ellipse = is_ellipse_capable and self.shape.get() == SHAPE_ELLIPSE
         uses_angle = topo in ANGLE_TOPOLOGIES
         uses_steer = topo in STEER_TOPOLOGIES
-        uses_radius = is_physical or is_progressive
-        no_spacing = is_physical or is_manual or is_progressive
+        uses_radius = is_physical
+        no_spacing = is_physical or is_manual
         uses_gradient_pattern = topo in GRADIENT_PATTERN_TOPOLOGIES
 
         self._set_widgets_visible(
@@ -2633,13 +2658,13 @@ class App(tk.Tk):
                      "the same symmetric arc-steering pattern as Arc / Broadside Steering, added underneath "
                      "each column's own front/rear offset. Spacing = column-to-column (lateral); Row spacing "
                      "= front-to-back depth within a column.",
-            TOPO_PROGRESSIVE: "Same physical model as Physical Horizontal Array (every element equidistant "
-                     "from one center of curvature on a real arc of the given Radius, so delay stays fixed "
-                     "at 0 and Rotation is the true local aim angle) but with a non-uniform angular step "
-                     "between adjacent elements instead of a constant one -- Progression sets the center:edge (needs 4+ elements) "
-                     "step ratio (1.0 = uniform, identical to Physical Horizontal Array). Above 1.0 the center "
-                     "gap(s) widen and the edge gaps narrow, so total coverage angle (and FAR) is unchanged. "
-                     "This app's own extension, not part of S.A.D.",
+            TOPO_PROGRESSIVE: "Sub 1..N in a straight line, all normal polarity, with gaps that widen "
+                     "toward both ends: Spacing is the centre gap and Progression is edge gap / centre gap "
+                     "(1.0 = even spacing; needs 4+ subs to vary). Delay comes from a virtual arc: a circle "
+                     "sized so the line's two ends span the Arc angle, each sub delayed by the circle's bow "
+                     "depth at its real position, so delay follows the uneven spacing. Steer and Shape = "
+                     "Ellipse work as in Arc / Broadside Steering. Physically flat: depth and Rotation are 0. "
+                     "This app's own extension, not part of S.A.D. -- no tutorial ground truth.",
             TOPO_FOCUS: "\"Destruction Mode\": elements in a straight line (same physical layout as Arc / "
                      "Broadside Steering), all delayed so their output arrives at one target point (Focus X/Y) "
                      "at the same instant, for maximum constructive buildup there. Near-field acoustic "
@@ -2801,11 +2826,9 @@ class App(tk.Tk):
                                             self.angle.get(), self._speed_of_sound(), trims, self.steer.get(),
                                             self._ellipse_depth_scale(), self.gradient_alpha.get())
             if topo == TOPO_PROGRESSIVE:
-                # Every element is still exactly Radius from one center of
-                # curvature (see progressive_arc_layout) -- same physics as
-                # Physical Horizontal Array, so the same zero-delay function
-                # applies regardless of the angular progression.
-                return physical_horizontal_array(self.count.get(), trims)
+                return progressive_arc(self.count.get(), self.spacing.get(), self.progression_ratio.get(),
+                                        self.angle.get(), self._speed_of_sound(), trims, self.steer.get(),
+                                        self._ellipse_depth_scale())
             if topo == TOPO_FOCUS:
                 return focus_point(self.count.get(), self.spacing.get(), self.focus_x.get(), self.focus_y.get(),
                                     self._speed_of_sound(), trims)
@@ -2828,7 +2851,7 @@ class App(tk.Tk):
 
     def _compute_positions(self):
         topo = self.topology.get()
-        if topo in (TOPO_PHYSICAL, TOPO_PROGRESSIVE):
+        if topo == TOPO_PHYSICAL:
             return [lateral for _, lateral, _ in self._compute_physical_layout()]
         if topo == TOPO_MANUAL:
             try:
@@ -2841,6 +2864,11 @@ class App(tk.Tk):
             return []
         if topo == TOPO_GRADIENT:
             return sub_positions_gradient(self.count.get(), spacing)
+        if topo == TOPO_PROGRESSIVE:
+            try:
+                return progressive_line_positions(self.count.get(), spacing, self.progression_ratio.get())
+            except tk.TclError:
+                return []
         if topo == TOPO_ARC or topo == TOPO_FOCUS or topo == TOPO_AVOID:
             return sub_positions_centered(self.count.get(), spacing)
         if topo in ARC_HYBRID_TOPOLOGIES:
@@ -2849,8 +2877,9 @@ class App(tk.Tk):
 
     def _compute_physical_layout(self):
         """(depth, lateral, rotation) per sub -- real geometry for
-        Physical Horizontal Array (Circle or Ellipse Shape) and
-        Progressive Arc (all via array_math's layout functions),
+        Physical Horizontal Array (Circle or Ellipse Shape, via
+        array_math's layout functions), Progressive Arc (a straight line
+        with uneven gaps: depth and rotation 0),
         Manual (from free X/Y placement, rotation always 0 -- no
         directivity model), the Arc Hybrids (front/rear depth per
         column, rotation always 0 -- physically a straight line, only
@@ -2876,7 +2905,8 @@ class App(tk.Tk):
             return [(d, y, 0.0) for d, y in zip(depths, laterals)]
         if topo == TOPO_PROGRESSIVE:
             try:
-                return progressive_arc_layout(n, self.radius.get(), self.angle.get(), self.progression_ratio.get())
+                return [(0.0, y, 0.0) for y in
+                        progressive_line_positions(n, self.spacing.get(), self.progression_ratio.get())]
             except tk.TclError:
                 return [(0.0, 0.0, 0.0)] * n
         if topo != TOPO_PHYSICAL:

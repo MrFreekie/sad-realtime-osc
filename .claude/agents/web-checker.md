@@ -31,7 +31,7 @@ You are a QA engineer for the browser version of a live-show subwoofer array cal
 
 ## Existing automated checks (run these first; report their output)
 
-- `python tests/check_parity.py`: 115 math snapshot cases.
+- `python tests/check_parity.py`: 122 math snapshot cases.
 - `python tests/check_web_model.py`: the desktop app run without a window beside `model.py`. It covers 85 scenarios, every readout and saved file.
 - Pyodide parity under Node:
   1. `npm install --prefix <temp dir> --no-audit --no-fund pyodide@<version pinned in engine.js>`
@@ -67,7 +67,7 @@ Do everything else: the checks above, plus model-level and static checks. State 
 2. **Load and console:**
    - The page reaches "Ready".
    - There are no console errors or failed network requests (`read_console_messages`, `read_network_requests`, server logs via `preview_logs`; a missing favicon is fine).
-   - `web/selftest.html` shows 115/115 (`document.documentElement.dataset.selftest === "pass"`).
+   - `web/selftest.html` shows 122/122 (`document.documentElement.dataset.selftest === "pass"`).
 3. **Every topology, driven through the page:**
    - Pick each topology, change count to min, typical and max, and move sliders.
    - Confirm the right controls show and hide, and that the results table has one row per sub.

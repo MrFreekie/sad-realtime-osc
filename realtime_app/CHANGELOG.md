@@ -5,6 +5,32 @@ Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
 ## [Unreleased]
+Changed (both apps): **Progressive Arc** is now a straight line with uneven
+spacing, delayed like an arc. Before, it was a physical curved arc with uneven
+angular steps and zero delay.
+- **Layout:** the subs stand in one straight line. **Spacing** is the centre
+  gap; **Progression** is now edge gap ÷ centre gap, and the gaps in between
+  widen evenly toward both ends. 1.0 is an evenly spaced line.
+- **Delay:** a virtual circle is sized so the line's two ends span the Arc
+  angle. Each sub is delayed by the circle's bow depth at its real position,
+  so delay follows the uneven spacing.
+- **Steer and Shape = Ellipse** now work for Progressive Arc, the same way as
+  in Arc / Broadside Steering. The Level taper's peak follows Steer.
+- **Radius** no longer applies to Progressive Arc. Depth and Rotation are 0
+  for every sub.
+- **Readouts:** the collision check uses Spacing (the smallest gap), the
+  grating-lobe check uses the widest (edge) gap, the ½λ optimum-spacing
+  readout and its Use button now work, and the virtual source is a fit to the
+  new delays.
+- **Old files:** `.sadrt` files keep the same key and still load, but give the
+  straight-line layout, and their Progression value is read as the new gap
+  ratio.
+- **Parity cases:** the 3 `progressive_arc_layout_*` cases are gone (that
+  function was removed). 10 new cases cover `progressive_line_positions`,
+  `progressive_arc`, `progressive_aim_index` and `progressive_virtual_source`.
+  No other case moved; the total is now 122 (was 115).
+- `check_web_model.py` adds a steered, Ellipse, tapered Progressive scenario.
+
 Added (both apps): a **Layout** plot under the per-sub table. It's a plan view
 of the table's X and Y in metres, with X left to right and Y bottom to top.
 - Each sub is drawn as the Setup tab's box size, turned by its Rotation, with

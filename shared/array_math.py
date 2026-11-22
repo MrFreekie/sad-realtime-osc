@@ -305,8 +305,8 @@ def arc_virtual_source(n: int, spacing_m: float, angle_deg: float,
 def physical_virtual_source_m(radius_m: float, ratio: float = 1.0):
     """Distance behind the centre element of the physical arc's centre of
     curvature, where the sound appears to come from: exactly radius_m for a
-    true circle (Physical Horizontal Array, Progressive Arc -- every element
-    is radius_m from it), radius_m/ratio at the vertex of an Ellipse (ratio
+    true circle (Physical Horizontal Array -- every element is radius_m
+    from it), radius_m/ratio at the vertex of an Ellipse (ratio
     scales the depth, so the curvature at the centre is 1/ratio times
     tighter). None if radius_m or ratio isn't positive."""
     if radius_m is None or radius_m <= 0 or ratio is None or ratio <= 0:
@@ -491,8 +491,7 @@ def physical_horizontal_array(n: int, gain_trim_db=None) -> list[SubOutput]:
 def _arc_point(radius_m: float, phi_deg: float, depth_scale: float = 1.0) -> tuple[float, float]:
     """(depth_m, lateral_m) for a point on a circular arc at angle phi_deg
     from center, with optional depth_scale ratio (Ellipse mode). Used by
-    physical_arc_layout, physical_ellipse_layout, and progressive_arc_layout
-    to avoid duplicating the sagitta geometry."""
+    physical_arc_layout and physical_ellipse_layout to avoid duplicating the sagitta geometry."""
     phi = math.radians(phi_deg)
     return (-depth_scale * radius_m * (1.0 - math.cos(phi)), radius_m * math.sin(phi))
 
@@ -544,7 +543,7 @@ def _trims(gain_trim_db, n: int) -> list[float]:
 def min_adjacent_chord(layout) -> float:
     """Smallest straight-line distance between two physically adjacent
     elements in a (depth_m, lateral_m, rotation_deg) layout list -- the
-    physical-gap collision check for layouts (Ellipse, Progressive Arc)
+    physical-gap collision check for layouts (Ellipse)
     whose element-to-element spacing isn't constant like the plain
     circle's (physical_arc_chord_spacing), so it has to be measured
     directly from the actual placed coordinates instead of derived from
@@ -621,71 +620,158 @@ def angle_from_far_ellipse(far):
     return MAX_ARC_ANGLE_DEG
 
 
-def progressive_arc_layout(n: int, radius_m: float, angle_deg: float, ratio: float = 1.0):
-    """(depth_m, lateral_m, rotation_deg) for n elements on a real
-    circular arc of radius_m spanning angle_deg (same physical model as
-    physical_arc_layout -- every element is still exactly radius_m from
-    one center of curvature, so delay stays 0 for all of them, same as
-    physical_horizontal_array), but with a non-uniform angular step
-    between adjacent elements instead of physical_arc_layout's constant
-    one -- a "J-array"-style progressive spread. This app's own
-    extension, not part of S.A.D. -- no tutorial ground truth to check
-    it against.
+def progressive_line_positions(n: int, spacing_m: float, ratio: float = 1.0) -> list[float]:
+    """Lateral position of each of n elements on a STRAIGHT line whose gaps
+    widen toward both ends, in meters -- symmetric about the line's centre,
+    element 1 at the most positive end (same convention as
+    sub_positions_centered). Progressive Arc's placement. This app's own
+    extension, not part of S.A.D. -- no tutorial ground truth.
 
-    `ratio` (>= 1.0) is the angular step at the array's center divided
-    by the step at its edges: ratio = 1.0 reproduces physical_arc_layout
-    exactly (uniform steps); ratio > 1 makes the center step
-    progressively larger (tighter curvature there) and the edge steps
-    progressively smaller (flatter, longer throw down the flanks) --
-    chosen over the opposite direction since a flatter flank throws
-    further for the same element count, while the tighter center adds
-    near-field pattern control where the audience is already closest.
-    The per-gap steps are linearly interpolated between center and edge
-    weight and renormalized so they still sum to exactly angle_deg, so
-    total coverage angle (and FAR) is unaffected by ratio.
-
-    Rotation is still the local parametric angle (phi_deg), same as
-    physical_arc_layout and for the same reason it's valid there: every
-    element sits on the one true circle of radius_m, just at a
-    non-uniformly chosen angular position on it, so the tangent/normal
-    direction is still exactly phi_deg -- unlike the ellipse above,
-    there's no shape distortion that would break that equivalence."""
-    if n <= 1 or angle_deg <= 0:
-        return [(0.0, 0.0, 0.0) for _ in range(n)]
-    if n == 2 or ratio <= 1.0:
-        return physical_arc_layout(n, radius_m, angle_deg)
-
+    spacing_m is the gap at the centre of the line; `ratio` (>= 1.0) is the
+    edge gap divided by the centre gap. The centre-most gap(s) are exactly
+    spacing_m, the two edge gaps exactly ratio * spacing_m, linearly
+    interpolated in between by distance from the centre. ratio = 1.0 gives
+    sub_positions_centered exactly. The centre-most distance is 0 for an
+    odd gap count (one middle gap) but 0.5 for an even one (two middle
+    gaps), so the ramp runs from that nearest distance, not from 0. With 2
+    or 3 elements every gap is both centre and edge: uniform spacing."""
+    if n <= 1:
+        return [0.0] * max(n, 0)
+    ratio = max(1.0, ratio)
     gaps = n - 1
-    center_gap = (gaps - 1) / 2.0
-    # Per-gap weight: exactly `ratio` at the center-most gap(s), exactly 1.0
-    # at the edge gaps, linearly interpolated in between by distance from
-    # center. The center-most distance is 0 for an odd gap count (one middle
-    # gap) but 0.5 for an even one (two middle gaps), so the interpolation
-    # runs from that nearest distance, not from 0, or the middle gaps of an
-    # even-gap array would fall short of `ratio`. With only 2 gaps (3
-    # elements) both gaps are middle and edge at once: nothing to progress.
+    centre_gap = (gaps - 1) / 2.0
     d_min = 0.0 if gaps % 2 else 0.5
-    span = center_gap - d_min
-    if span <= 0:
-        return physical_arc_layout(n, radius_m, angle_deg)
-    weights = [1.0 + (ratio - 1.0) * (1.0 - (abs(g - center_gap) - d_min) / span) for g in range(gaps)]
-    total_weight = sum(weights)
-    d_phis = [angle_deg * w / total_weight for w in weights]
+    span = centre_gap - d_min
+    if span <= 0 or ratio == 1.0:
+        return sub_positions_centered(n, spacing_m)
+    widths = [spacing_m * (1.0 + (ratio - 1.0) * (abs(g - centre_gap) - d_min) / span) for g in range(gaps)]
+    raw = [0.0]
+    for w in widths:
+        raw.append(raw[-1] + w)
+    mid = raw[-1] / 2.0
+    # snap float residue at the centre to an exact 0 (no "-0.00" readouts)
+    return [0.0 if abs(mid - p) < 1e-9 else mid - p for p in raw]
 
-    # Cumulative angular position of each element, edge to edge, then
-    # re-centered so the layout is symmetric about 0 -- same convention
-    # as physical_arc_layout (element 1 at the most positive position).
-    raw_phi = [0.0]
-    for d_phi in d_phis:
-        raw_phi.append(raw_phi[-1] + d_phi)
-    mid = raw_phi[-1] / 2.0
-    phis_deg = [mid - p for p in raw_phi]
 
-    out = []
-    for phi_deg in phis_deg:
-        depth, lateral = _arc_point(radius_m, phi_deg)
-        out.append((depth, lateral, phi_deg))
-    return out
+def _line_virtual_radius_m(lateral_m, angle_deg: float) -> float:
+    """Radius of the virtual circle whose ends, at the line's two outermost
+    elements, face +/- angle_deg/2: (half the line's length) / sin(angle/2).
+    0.0 for no curvature (angle <= 0 or a line of zero length)."""
+    if len(lateral_m) < 2 or angle_deg <= 0:
+        return 0.0
+    half = (max(lateral_m) - min(lateral_m)) / 2.0
+    s = math.sin(math.radians(min(angle_deg, MAX_ARC_ANGLE_DEG)) / 2.0)
+    return half / s if half > 0 and s > 1e-9 else 0.0
+
+
+def _line_arc_delays_s(lateral_m, angle_deg: float, speed_mps: float,
+                       steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[float]:
+    """Per-element delay, seconds, for elements at arbitrary lateral
+    positions on a straight line, delayed as if they sat on a virtual
+    circle (Progressive Arc's delay model). The circle is sized so the two
+    outermost elements face +/- angle_deg/2 (_line_virtual_radius_m); each
+    element's delay is the circle's bow depth at its own real position,
+    R - sqrt(R^2 - u^2) with u measured from the line's centre, divided by
+    c -- so delay follows the real (uneven) spacing rather than the
+    element's index. Unlike _arc_column_delays_s, which places element i at
+    an equal angular step on its arc, this uses the real position, so even
+    at uniform spacing it differs slightly from Arc / Broadside Steering
+    (identical in the small-angle limit).
+
+    steer_deg and depth_scale mean what they do in _arc_column_delays_s:
+    steering adds the linear ramp u*sin(steer) (positive steer delays the
+    sub-1 end, so the beam aims toward sub 1), and depth_scale (Ellipse
+    ratio) scales only the curvature term. Zero-referenced (min = 0 s)."""
+    n = len(lateral_m)
+    if n <= 1 or (angle_deg <= 0 and steer_deg == 0):
+        return [0.0] * n
+    centre = (max(lateral_m) + min(lateral_m)) / 2.0
+    radius = _line_virtual_radius_m(lateral_m, angle_deg)
+    steer = math.sin(math.radians(steer_deg))
+    raw = []
+    for y in lateral_m:
+        u = y - centre
+        bow = depth_scale * (radius - math.sqrt(max(radius * radius - u * u, 0.0))) if radius else 0.0
+        raw.append((bow + u * steer) / speed_mps)
+    zero = min(raw)
+    return [d - zero for d in raw]
+
+
+def progressive_arc(n: int, spacing_m: float, ratio: float, angle_deg: float, speed_mps: float,
+                    gain_trim_db=None, steer_deg: float = 0.0, depth_scale: float = 1.0) -> list[SubOutput]:
+    """Progressive Arc: n elements in a straight line with gaps widening
+    toward both ends (progressive_line_positions: centre gap spacing_m,
+    edge gap ratio * spacing_m), delayed so the line behaves like an arc
+    spanning angle_deg (_line_arc_delays_s). Steer and Ellipse depth_scale
+    work as in arc_steering. Physically a straight line: depth 0 and
+    rotation 0 for every element. This app's own extension, not part of
+    S.A.D. -- no tutorial ground truth. Up to 0.10.0 Progressive Arc was a
+    physical curved arc (non-uniform angular steps, rotation, zero delay)."""
+    trims = _trims(gain_trim_db, n)
+    lateral = progressive_line_positions(n, spacing_m, ratio)
+    delays_s = _line_arc_delays_s(lateral, angle_deg, speed_mps, steer_deg, depth_scale)
+    return [SubOutput(i + 1, delays_s[i] * 1000.0, trims[i], False) for i in range(n)]
+
+
+def progressive_aim_index(n: int, spacing_m: float, ratio: float, angle_deg: float, steer_deg: float) -> float:
+    """Progressive Arc's version of arc_steered_aim_index: the continuous
+    element index (0..n-1) where the steered virtual circle's normal points
+    along the Steer angle, used to centre the Level taper there. With the
+    steering ramp of _line_arc_delays_s, positive steer moves the
+    minimum-delay point toward the higher-numbered end (as in
+    arc_steered_aim_index), to lateral u* = -R*sin(steer) from the line's
+    centre, clamped to the line's ends and turned into an index by linear
+    interpolation between the real (uneven) positions. Same edge rules as
+    arc_steered_aim_index when there is no curvature. An approximation for
+    the taper only, like arc_steered_aim_index; not a derived optimum."""
+    centre_index = (n - 1) / 2.0
+    if n <= 1:
+        return centre_index
+    lateral = progressive_line_positions(n, spacing_m, ratio)
+    radius = _line_virtual_radius_m(lateral, angle_deg)
+    if radius <= 0:
+        if steer_deg > 0:
+            return float(n - 1)
+        if steer_deg < 0:
+            return 0.0
+        return centre_index
+    half = math.radians(angle_deg) / 2.0
+    phi = max(-half, min(half, math.radians(steer_deg)))
+    target = -radius * math.sin(phi)
+    # lateral runs from most positive (sub 1) down to most negative
+    if target >= lateral[0]:
+        return 0.0
+    if target <= lateral[-1]:
+        return float(n - 1)
+    for i in range(n - 1):
+        a, b = lateral[i], lateral[i + 1]
+        if a >= target >= b:
+            return i + (a - target) / (a - b) if a != b else float(i)
+    return centre_index
+
+
+def progressive_virtual_source(n: int, spacing_m: float, ratio: float, angle_deg: float,
+                               steer_deg: float = 0.0, depth_scale: float = 1.0):
+    """arc_virtual_source for Progressive Arc: (distance_behind_m,
+    offset_toward_higher_m, fit_rms_m) of the point source best matching
+    _line_arc_delays_s at the real (uneven) positions, or None with no
+    curvature. Same fit and sign conventions as arc_virtual_source."""
+    if not all(v is not None and math.isfinite(v) for v in (spacing_m, ratio, angle_deg, steer_deg, depth_scale)):
+        return None
+    lateral = progressive_line_positions(n, spacing_m, ratio)
+    radius = _line_virtual_radius_m(lateral, angle_deg)
+    if radius <= 0 or depth_scale <= 0:
+        return None
+    path_m = _line_arc_delays_s(lateral, angle_deg, 1.0, steer_deg, depth_scale)
+    xs = [-y for y in lateral]  # arc_virtual_source's x: sub 1 at the negative end
+    rho = radius / depth_scale
+    span = max(max(xs) - min(xs), 1e-3)
+    far = 20.0 * span
+    far_offset = far * math.tan(math.radians(max(-89.0, min(89.0, steer_deg))))
+    fits = [_fit_point_source(xs, path_m, seed)
+            for seed in ((rho * math.sin(math.radians(steer_deg)), rho), (0.0, far), (far_offset, far))]
+    offset, behind, rms = min(fits, key=lambda f: f[2])
+    return behind, offset, rms
 
 
 def forward_aspect_ratio(angle_deg: float):
