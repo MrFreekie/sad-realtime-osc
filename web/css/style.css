@@ -12,6 +12,8 @@
   --bad: #b91c1c;
   --radius: 8px;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* One easing for all UI motion: fast start, crisp settle */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   color-scheme: light;
 }
 
@@ -102,6 +104,7 @@ a { color: var(--accent); }
 .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 main { max-width: 1480px; margin: 0 auto; padding: 16px 20px; }
+main { transition: opacity 200ms ease; }
 main[inert] { opacity: 0.55; }
 [hidden] { display: none !important; }
 
@@ -163,8 +166,16 @@ button {
   padding: 4px 10px;
   cursor: pointer;
   white-space: nowrap;
+  transition: transform 120ms var(--ease-out), border-color 120ms ease, opacity 100ms ease, filter 100ms ease;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
+/* Gated so a tap on a touch screen doesn't leave the border stuck on */
+@media (hover: hover) and (pointer: fine) {
+  button:hover:not(:disabled) { border-color: var(--accent); }
+}
+/* Press feedback (not on tabs: they switch by keyboard too and stay instant) */
+button:active:not(:disabled):not(.tabs button) { transform: scale(0.97); }
+/* Label swap (app.js flashButtonLabel) */
+button.swapping { opacity: 0.4; filter: blur(2px); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
@@ -190,6 +201,17 @@ button.help {
   font-size: 12.5px;
   line-height: 1.5;
   white-space: pre-line;
+  /* Grows out of its ? button: app.js sets data-side when it flips above */
+  transform-origin: top left;
+  opacity: 0;
+  transform: scale(0.97);
+  transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out),
+              overlay 150ms allow-discrete, display 150ms allow-discrete;
+}
+.help-pop[data-side="above"] { transform-origin: bottom left; }
+.help-pop:popover-open { opacity: 1; transform: none; }
+@starting-style {
+  .help-pop:popover-open { opacity: 0; transform: scale(0.97); }
 }
 
 .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
@@ -216,6 +238,11 @@ table.results th:first-child, table.results td:first-child { text-align: left; }
 table.results td { font-family: var(--mono); }
 table.results td input[type="number"] { width: 84px; text-align: right; padding: 2px 6px; }
 .pol-rev { color: var(--warn); font-weight: 600; }
+/* A value that just changed (not during slider drags; see renderTable) */
+table.results td.changed { animation: cell-changed 700ms var(--ease-out); }
+@keyframes cell-changed {
+  from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+}
 
 /* Layout plot (drawn by app.js from view.plot) */
 .layout-plot { display: block; width: 100%; height: 300px; font-family: var(--mono); }
@@ -243,6 +270,19 @@ dialog {
   padding: 16px 18px;
 }
 dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+/* Enter 200 ms, exit 150 ms; centred, since a dialog isn't tied to a trigger */
+dialog, dialog::backdrop {
+  transition: opacity 150ms ease, transform 150ms var(--ease-out),
+              overlay 150ms allow-discrete, display 150ms allow-discrete;
+  opacity: 0;
+}
+dialog { transform: scale(0.98); }
+dialog[open], dialog[open]::backdrop { opacity: 1; transition-duration: 200ms; }
+dialog[open] { transform: none; }
+@starting-style {
+  dialog[open], dialog[open]::backdrop { opacity: 0; }
+  dialog[open] { transform: scale(0.98); }
+}
 dialog h2 { font-size: 15px; margin: 0 0 8px; }
 
 .app-footer { max-width: 1480px; margin: 0 auto; padding: 4px 20px 24px; color: var(--text-muted); font-size: 12px; }
@@ -252,4 +292,13 @@ dialog h2 { font-size: 15px; margin: 0 0 8px; }
 @media (max-width: 560px) {
   .row { grid-template-columns: 1fr 1fr; }
   .row > input[type="range"] { grid-column: 1 / -1; }
+}
+
+/* Reduced motion: keep the fades (they help read state changes), drop scaling */
+@media (prefers-reduced-motion: reduce) {
+  button:active:not(:disabled) { transform: none; }
+  .help-pop, .help-pop:popover-open, dialog, dialog[open] { transform: none; }
+  @starting-style {
+    .help-pop:popover-open, dialog[open] { transform: none; }
+  }
 }

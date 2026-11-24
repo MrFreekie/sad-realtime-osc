@@ -28,6 +28,17 @@ angular steps and zero delay.
 - **Parity cases:** the 3 `progressive_arc_layout_*` cases are gone (that
   function was removed). 10 new cases cover `progressive_line_positions`,
   `progressive_arc`, `progressive_aim_index` and `progressive_virtual_source`.
+
+Changed (web app only, no math change): interface polish.
+- Buttons shrink slightly when pressed; the hover border only shows on a
+  mouse, so it doesn't stick on after a tap on a touch screen.
+- **Copy** briefly changes to "Copied ✓" when the table is on the clipboard.
+- After a typed change or a Load, per-sub cells whose value changed get a
+  short tint so you can see which subs moved. Slider drags and unit changes
+  don't flash.
+- Help popovers fade and grow out of their **?** button, dialogs fade in, and
+  the page fades from the loading state. With reduced motion turned on in the
+  system, only the fades stay.
   No other case moved; the total is now 122 (was 115).
 - `check_web_model.py` adds a steered, Ellipse, tapered Progressive scenario.
 

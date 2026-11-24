@@ -30,6 +30,8 @@ function get(obj, path) {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+let lastTableUnit = null;
+
 function setStatus(text, kind = "loading") {
   $("status").textContent = text;
   $("status").dataset.state = kind;
@@ -108,6 +110,9 @@ function applyResponse(json) {
 }
 
 let pending = null;
+// True while a slider-drag dispatch renders, so the table doesn't flash
+// changed cells on every frame of a drag (see renderTable).
+let fromDrag = false;
 function dispatch(action) {
   return applyResponse(model.dispatch(JSON.stringify(state), JSON.stringify(action)));
 }
@@ -122,7 +127,12 @@ function dispatchCoalesced(action) {
     requestAnimationFrame(() => {
       const a = pending;
       pending = null;
-      dispatch(a);
+      fromDrag = true;
+      try {
+        dispatch(a);
+      } finally {
+        fromDrag = false;
+      }
     });
   }
 }
@@ -248,6 +258,13 @@ function renderTable() {
     });
     return;
   }
+  // Briefly tint read-only cells whose value changed, so a typed change or
+  // a Load shows which subs moved. Skipped during slider drags (it would
+  // flicker every frame), on a unit change (every cell changes) and when
+  // the row count changes.
+  const flash = !fromDrag && unitLabel === lastTableUnit && tbody.rows.length === t.rows.length;
+  const oldText = flash ? [...tbody.rows].map((tr) => [...tr.cells].map((c) => c.textContent)) : null;
+  lastTableUnit = unitLabel;
   const rows = t.rows.map((r, i) => {
     const tr = document.createElement("tr");
     const cell = (text, cls) => {
@@ -290,6 +307,13 @@ function renderTable() {
       tr.append(td);
     } else {
       tr.append(cell(r.text.polarity, r.polarity_reversed ? "pol-rev" : ""));
+    }
+    if (oldText) {
+      [...tr.cells].forEach((td, c) => {
+        if (!td.firstElementChild && oldText[i][c] !== undefined && oldText[i][c] !== td.textContent) {
+          td.classList.add("changed");
+        }
+      });
     }
     return tr;
   });
@@ -463,6 +487,29 @@ function tableHeaders() {
   return [...document.querySelectorAll(".results thead th")].map((th) => th.textContent);
 }
 
+// Swap a button's label for a moment to confirm an action at the button
+// itself (the header status is easy to miss). The width is held so the
+// row of buttons doesn't shift.
+const labelTimers = new WeakMap();
+function flashButtonLabel(btn, text, ms = 1500) {
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+  btn.style.minWidth = `${btn.offsetWidth}px`;
+  clearTimeout(labelTimers.get(btn));
+  btn.classList.add("swapping");
+  setTimeout(() => {
+    btn.textContent = text;
+    btn.classList.remove("swapping");
+  }, 100);
+  labelTimers.set(btn, setTimeout(() => {
+    btn.classList.add("swapping");
+    setTimeout(() => {
+      btn.textContent = btn.dataset.label;
+      btn.classList.remove("swapping");
+      btn.style.minWidth = "";
+    }, 100);
+  }, ms));
+}
+
 async function copyTable() {
   const lines = [tableHeaders().join("\t")];
   for (const r of view.table.rows) {
@@ -472,6 +519,7 @@ async function copyTable() {
   try {
     await navigator.clipboard.writeText(lines.join("\n"));
     setStatus("Table copied to clipboard", "ready");
+    flashButtonLabel($("btn-copy"), "Copied ✓");
   } catch {
     setStatus("Couldn't copy: the browser blocked clipboard access", "error");
   }
@@ -523,6 +571,8 @@ function setupHelp() {
       else if (h <= above) top = r.top - gap - h;
       else top = Math.max(margin, window.innerHeight - margin - h);
       pop.style.top = `${top}px`;
+      // The CSS grows it from the side nearest the button
+      pop.dataset.side = top < r.top ? "above" : "below";
     });
   }
 }
