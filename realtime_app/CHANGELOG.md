@@ -4,7 +4,11 @@ All notable changes to S.A.D. Realtime (desktop and web) are logged here.
 Bump `__version__` in [shared/version.py](../shared/version.py) alongside
 each entry.
 
-## [Unreleased]
+## [0.11.0] - 2026-11-25
+**Progressive Arc** changes its layout and delays (see below), so its outputs
+differ from 0.10.0. Every other topology gives the same delay, gain and
+polarity as 0.10.0. Both apps also gain a **Layout** plot.
+
 Changed (both apps): **Progressive Arc** is now a straight line with uneven
 spacing, delayed like an arc. Before, it was a physical curved arc with uneven
 angular steps and zero delay.
@@ -28,17 +32,6 @@ angular steps and zero delay.
 - **Parity cases:** the 3 `progressive_arc_layout_*` cases are gone (that
   function was removed). 10 new cases cover `progressive_line_positions`,
   `progressive_arc`, `progressive_aim_index` and `progressive_virtual_source`.
-
-Changed (web app only, no math change): interface polish.
-- Buttons shrink slightly when pressed; the hover border only shows on a
-  mouse, so it doesn't stick on after a tap on a touch screen.
-- **Copy** briefly changes to "Copied ✓" when the table is on the clipboard.
-- After a typed change or a Load, per-sub cells whose value changed get a
-  short tint so you can see which subs moved. Slider drags and unit changes
-  don't flash.
-- Help popovers fade and grow out of their **?** button, dialogs fade in, and
-  the page fades from the loading state. With reduced motion turned on in the
-  system, only the fades stay.
   No other case moved; the total is now 122 (was 115).
 - `check_web_model.py` adds a steered, Ellipse, tapered Progressive scenario.
 
@@ -69,6 +62,17 @@ same sign as every other topology, where larger means closer to the audience.
   the snapshot.)
 - **Compared with S.A.D.:** its sheet lists these distances as positive
   numbers.
+
+Changed (web app only, no math change): interface polish.
+- Buttons shrink slightly when pressed; the hover border only shows on a
+  mouse, so it doesn't stick on after a tap on a touch screen.
+- **Copy** briefly changes to "Copied ✓" when the table is on the clipboard.
+- After a typed change or a Load, per-sub cells whose value changed get a
+  short tint so you can see which subs moved. Slider drags and unit changes
+  don't flash.
+- Help popovers fade and grow out of their **?** button, dialogs fade in, and
+  the page fades from the loading state. With reduced motion turned on in the
+  system, only the fades stay.
 
 ## [0.10.0] - 2026-11-12
 The **web app** is new in this release: https://mrfreekie.github.io/sad-realtime-osc/

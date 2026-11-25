@@ -2,4 +2,4 @@
 
 Bump this together with a CHANGELOG.md entry (realtime_app/CHANGELOG.md).
 """
-__version__ = "0.10.0"
+__version__ = "0.11.0"
